@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Meeds Doctor — teste de fumaça</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; background: #f4f6f8; color: #16221f; }
+  header { background: linear-gradient(90deg,#0ea5a4,#0f766e); color: #fff; padding: 14px 22px; font-weight: 700; }
+  main { padding: 22px; max-width: 1100px; }
+  .cartoes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .cartao { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px 18px; }
+  .cartao .rotulo { color: #64748b; font-size: 13px; }
+  .cartao .numero { font-size: 30px; font-weight: 700; margin: 6px 0 2px; }
+  .cartao .nota { color: #94a3b8; font-size: 12px; }
+  .painel { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; margin-top: 18px; }
+  .painel h2 { font-size: 15px; margin: 0; padding: 16px 20px; border-bottom: 1px solid #e2e8f0; }
+  #lista { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; min-height: 60px; }
+  .paciente { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; font-weight: 600; }
+  .barra { margin-top: 22px; display: flex; gap: 10px; flex-wrap: wrap; }
+  button.sim { background: #0f766e; color: #fff; border: none; border-radius: 9px; padding: 10px 16px; font: 600 13px system-ui; cursor: pointer; }
+  button.sim.cinza { background: #64748b; }
+  #toasts { position: fixed; top: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 10; }
+  .toast { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.12); max-width: 320px; }
+  .toast b { display: block; font-size: 13.5px; }
+  .toast span { font-size: 12.5px; color: #64748b; }
+  pre#log { background: #0f172a; color: #a7f3d0; padding: 12px 14px; border-radius: 10px; font-size: 11.5px; margin-top: 18px; max-height: 160px; overflow: auto; }
+  .aviso { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; padding: 10px 14px; border-radius: 9px; margin-top: 16px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<header>meeds DOCTOR — página de teste</header>
+<main>
+  <p>Imita o Pronto Atendimento do Meeds Doctor: os cartões com os rótulos reais, a lista de fila,
+     o toast <em>“Novo paciente na fila”</em> que o app emite sozinho, e um mock de
+     <code>/api/doctor/queues/mine</code>. Serve para conferir o alarme sem tocar em produção.</p>
+
+  <div class="cartoes">
+    <div class="cartao"><div class="rotulo">Aguardando</div><div class="numero" id="n-aguardando">0</div><div class="nota">na fila agora</div></div>
+    <div class="cartao"><div class="rotulo">Em atendimento</div><div class="numero">0</div><div class="nota">nenhuma ativa</div></div>
+    <div class="cartao"><div class="rotulo">Concluídos hoje</div><div class="numero">5</div><div class="nota">atendimentos</div></div>
+    <div class="cartao"><div class="rotulo">Tempo médio</div><div class="numero">5 min</div><div class="nota">por consulta</div></div>
+  </div>
+
+  <div class="painel"><h2>Todas as filas</h2><div id="lista"></div></div>
+
+  <div class="barra">
+    <button class="sim" id="b-chega">+1 paciente (API + contador + toast)</button>
+    <button class="sim" id="b-so-api">+1 só pela API</button>
+    <button class="sim" id="b-so-toast">só o toast do app</button>
+    <button class="sim cinza" id="b-vazia">Esvaziar fila</button>
+    <button class="sim cinza" id="b-consulta">Sair do Pronto Atendimento</button>
+  </div>
+
+  <div class="aviso">
+    O alarme não deve tocar na <b>primeira</b> leitura de cada fonte — ela só estabelece a base.
+    Sair do Pronto Atendimento faz o cartão sumir: o contador tem que virar <code>null</code>,
+    não zero, senão o alarme calaria sozinho.
+  </div>
+
+  <pre id="log"></pre>
+</main>
+<div id="toasts"></div>
+
+<script>
+  const log = (m) => {
+    const el = document.getElementById("log");
+    el.textContent += new Date().toLocaleTimeString() + "  " + m + "\n";
+    el.scrollTop = el.scrollHeight;
+  };
+
+  let fila = [];
+  let contador = 0;
+
+  function render() {
+    document.getElementById("n-aguardando").textContent = String(contador);
+    const lista = document.getElementById("lista");
+    lista.innerHTML = "";
+    fila.forEach((p) => {
+      const d = document.createElement("div");
+      d.className = "paciente";
+      d.textContent = "Paciente " + p.id.slice(0, 6) + " · macae";
+      lista.appendChild(d);
+    });
+  }
+
+  function toast() {
+    const t = document.createElement("div");
+    t.className = "toast";
+    t.innerHTML = "<b>Novo paciente na fila</b><span>Pronto atendimento</span>";
+    document.getElementById("toasts").appendChild(t);
+    setTimeout(() => t.remove(), 6000);
+  }
+
+  /* Mock do endpoint, no formato mais provavel: lista de filas com os
+     pacientes dentro. */
+  const original = window.fetch;
+  window.fetch = function (url, opts) {
+    if (String(url).indexOf("/api/doctor/queues/mine") !== -1) {
+      const corpo = { queues: [{ id: "q-macae", name: "macae", patients: fila.slice() }] };
+      log("GET /api/doctor/queues/mine -> " + fila.length + " paciente(s)");
+      return Promise.resolve(new Response(JSON.stringify(corpo), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    }
+    return original.apply(this, arguments);
+  };
+
+  const consultarFila = () => fetch("https://api.calltechsaude.com.br/api/doctor/queues/mine");
+  setInterval(consultarFila, 5000);
+  setTimeout(consultarFila, 400);
+
+  const novoId = () => "p-" + Math.random().toString(16).slice(2, 10);
+
+  document.getElementById("b-chega").onclick = () => {
+    fila.push({ id: novoId() }); contador = fila.length; render(); toast(); consultarFila();
+  };
+  document.getElementById("b-so-api").onclick = () => {
+    fila.push({ id: novoId() }); consultarFila(); log("(contador e toast NAO atualizados de proposito)");
+  };
+  document.getElementById("b-so-toast").onclick = () => { toast(); log("so o toast"); };
+  document.getElementById("b-vazia").onclick = () => {
+    fila = []; contador = 0; render(); consultarFila();
+  };
+  document.getElementById("b-consulta").onclick = () => {
+    document.querySelector(".cartoes").style.display =
+      document.querySelector(".cartoes").style.display === "none" ? "grid" : "none";
+    log("cartoes " + (document.querySelector(".cartoes").style.display === "none" ? "escondidos" : "visiveis"));
+  };
+
+  render();
+</script>
+<script src="../dist/meeds-b.user.js"></script>
+</body>
+</html>
