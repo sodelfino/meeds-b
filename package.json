@@ -1,13 +1,16 @@
 {
   "name": "meeds-b",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Alarme de fila para o Meeds Doctor (doctor.calltechsaude.com.br). Avisa o medico quando entra paciente no Pronto Atendimento, inclusive com a aba de fundo ou o navegador minimizado.",
   "scripts": {
     "build": "node scripts/build.js",
-    "verificar": "node scripts/build.js --check && node tests/atencao.test.js && node tests/fila.test.js",
+    "verificar": "node scripts/build.js --check && node tests/atencao.test.js && node tests/fila.test.js && node tests/som.test.js",
     "teste-atencao": "node tests/atencao.test.js",
-    "teste-fila": "node tests/fila.test.js"
+    "teste-fila": "node tests/fila.test.js",
+    "teste-som": "node tests/som.test.js"
   },
-  "engines": { "node": ">=14" }
+  "engines": {
+    "node": ">=14"
+  }
 }

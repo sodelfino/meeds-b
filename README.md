@@ -27,6 +27,42 @@ escada em que cada degrau muda de canal — não de volume:
 | onde o médico está | como ele é avisado |
 |---|---|
 | na aba, olhando | som + faixa vermelha no topo + moldura na borda da tela |
+
+### As três intensidades
+
+O botão funciona como o de som do Waze: um toque cicla entre três posições, em
+vez de só ligar e desligar. Um alarme com duas posições — berrando ou mudo —
+obriga o médico a escolher entre ser interrompido no meio de uma consulta e não
+ficar sabendo que chegou gente.
+
+| | O que acontece quando chega paciente |
+|---|---|
+| 🔔 **Completo** | Sirene repetindo, faixa no topo e moldura na tela até você silenciar |
+| 🔉 **Discreto** | Um som curto, uma vez. Nada na tela |
+| 🔕 **Silencioso** | Só o contador na aba e no favicone |
+
+O aviso do sistema, o título e o favicone valem nos três: eles são sobre **onde**
+avisar, não sobre o quanto incomodar.
+
+A lista de sons muda junto com a intensidade. As sirenes foram feitas para
+repetir e soam truncadas se tocadas uma vez só, então o modo discreto só oferece
+os sons curtos — os que têm começo, meio e fim em menos de um segundo.
+
+### A janela de aviso
+
+Terceiro canal, opcional e desligado de fábrica. A notificação do sistema aparece
+e some; a janela **fica** na barra de tarefas até alguém fechar. Para quem
+trabalha com várias janelas e perde a notificação no canto, é a diferença entre
+ver e não ver.
+
+Ela só abre quando o médico está **fora** da aba, e nunca rouba o foco. Duas
+razões para não ser padrão: o Chrome bloqueia pop-up não pedido por clique, e uma
+janela que salta no meio de uma teleconsulta é pior que o problema que resolve.
+
+No iPad a opção nem aparece — lá o iOS abre uma *aba* por cima do site, e só a
+partir de um gesto. Oferecer uma chave que não faz nada, com uma instrução de
+desbloqueio que fala de um ícone que o iPad não tem, gasta o plantão e ensina a
+desconfiar do resto do painel.
 | na aba, mas de fundo | contador no título e no ícone da aba: `(3) Meeds Doctor` |
 | fora do navegador | **notificação do sistema, clicável** — traz a aba para frente |
 | ninguém reagiu | volta em 5 minutos, e notifica de novo |
@@ -85,7 +121,8 @@ alarme que funciona de um que só parece funcionar.
 - **Nenhum dado de paciente é lido, gravado ou exibido.** O aviso fala em
   quantidade e tempo — nunca em gente.
 - Os ids de atendimento vivem em memória e morrem com a aba.
-- Em disco vão só as preferências do médico: ligado, som, volume.
+- Em disco vão só as preferências do médico: ligado, intensidade, som,
+  volume e se a janela de aviso está ligada.
 - O script **não faz requisição própria**. Ele lê respostas que a própria tela
   já buscou, e `/queues/mine` é, por definição, a fila do médico logado.
 - Uma notificação do sistema aparece na tela de bloqueio e no histórico de
@@ -111,7 +148,8 @@ Estrutura:
 
 ```
 src/atencao.js   por onde avisar (título, favicone, notificação, tela acesa)
-src/som.js       os quatro sons, sintetizados — sem arquivo externo
+src/som.js       os onze sons, sintetizados — sem arquivo externo
+                 (seis que repetem, cinco curtos; ver o campo `curto`)
 src/fila.js      como saber que chegou paciente NESTE site
 src/alarme.js    a lógica e a interface
 scripts/build.js junta tudo num userscript só

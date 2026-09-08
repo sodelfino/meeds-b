@@ -129,6 +129,10 @@
 
   render();
 </script>
-<script src="../dist/meeds-b.user.js"></script>
+<!-- ?v= pelo relogio: sem isso o navegador serve o pacote em cache e
+     voce testa a versao anterior sem perceber. -->
+<script>
+  document.write('<script src="../dist/meeds-b.user.js?v=' + Date.now() + '"><\/script>');
+</script>
 </body>
 </html>

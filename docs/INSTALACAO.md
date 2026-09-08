@@ -28,7 +28,10 @@ Entre em `doctor.calltechsaude.com.br` como sempre. Um botão 🔔 aparece no ca
 inferior direito. É só isso — ele já está funcionando.
 
 - **Clique** no botão para ligar e desligar o alarme.
-- **Clique com o botão direito** para escolher o som e o volume.
+- **Clique** no botão para trocar a intensidade: 🔔 completo → 🔉 discreto →
+  🔕 silencioso → 🔔 de novo.
+- **Clique com o botão direito** para o painel: ligar/desligar, intensidade,
+  som, volume e a janela de aviso.
 
 ## 4. Autorize o aviso do sistema (recomendado)
 
@@ -56,7 +59,7 @@ notificação do sistema.
 **Ele guarda dados dos meus pacientes?**
 Não. Nenhum nome, CPF ou queixa é lido, gravado ou enviado. O aviso fala em
 quantidade — "2 aguardando" — e nada mais. Em disco ficam só as suas
-preferências: ligado, som e volume.
+preferências: ligado, intensidade, som, volume e janela de aviso.
 
 **Ele funciona no iPad?**
 O alarme na tela sim. A notificação do sistema, não: o Safari não a oferece fora

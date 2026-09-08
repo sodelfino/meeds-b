@@ -367,6 +367,126 @@
     return null;
   }
 
+  /* ------------------------------------------------------------------
+   * JANELA DE AVISO (pop-up do navegador)
+   * ------------------------------------------------------------------
+   * Terceiro canal, e o mais barulhento dos tres. A notificacao do
+   * sistema aparece e some; a janela FICA na barra de tarefas ate alguem
+   * fechar. Para quem trabalha com varias janelas abertas e perde a
+   * notificacao no canto, e a diferenca entre ver e nao ver.
+   *
+   * DUAS RAZOES PARA ELA NAO SER PADRAO:
+   *   1. o Chrome bloqueia pop-up nao pedido por clique, e este e
+   *      disparado por chegada de paciente, nao por gesto do medico —
+   *      so funciona depois que o site ganha a permissao de pop-up;
+   *   2. uma janela que rouba o foco no meio de uma teleconsulta e pior
+   *      que o problema que resolve.
+   * Por isso ela e opcional, nasce desligada, e nunca chama focus().
+   *
+   * PRIVACIDADE: mesma regra da notificacao — quantidade e tempo, nunca
+   * nome de paciente. A janela pode ficar aberta atras de outras e
+   * aparecer em compartilhamento de tela.
+   * ------------------------------------------------------------------ */
+  var NOME_DA_JANELA = "meeds-aviso-fila";
+  var janelaAviso = null;
+
+  /* ------------------------------------------------------------------
+   * iPad / iPhone: a janela nao existe, e nao adianta pedir permissao
+   * ------------------------------------------------------------------
+   * `raiz.open` EXISTE no Safari do iOS, entao testar por ele daria
+   * "suportado" e a opcao apareceria ligavel. So que ali nao ha janela
+   * nenhuma: o iOS abre uma ABA nova, em cima do Meeds, e so a partir de
+   * um gesto do medico — este aviso e disparado por chegada de paciente.
+   * Na pratica: ou nao acontece nada, ou o Meeds sai da frente sozinho.
+   *
+   * Pior que a funcao nao funcionar era o que a tela dizia antes: mandava
+   * o medico "clicar no icone de pop-up bloqueado na barra de endereco",
+   * que no iPad nao existe. Instrucao que nao pode ser seguida gasta o
+   * plantao e ensina a desconfiar do resto do painel.
+   *
+   * iPadOS 13+ se identifica como Mac; o que separa os dois e ter mais de
+   * um ponto de toque.
+   * ------------------------------------------------------------------ */
+  function ehIOS() {
+    var ua = (raiz.navigator && raiz.navigator.userAgent) || "";
+    if (/Windows|Android/.test(ua)) return false;
+    var pareceApple = /iPad|iPhone|iPod|Macintosh/.test(ua);
+    return pareceApple && ((raiz.navigator && raiz.navigator.maxTouchPoints) || 0) > 1;
+  }
+
+  function suportaJanela() {
+    if (ehIOS()) return false;
+    return typeof raiz.open === "function";
+  }
+
+  function janelaBloqueada() {
+    /* Chrome devolve null quando bloqueia. Guardamos o resultado para a
+     * tela poder dizer ao medico o que aconteceu, em vez de ele achar
+     * que a opcao nao faz nada. */
+    return janelaAviso === false;
+  }
+
+  function abrirJanelaDeAviso(opcoes) {
+    var o = opcoes || {};
+    if (!suportaJanela()) return null;
+    var largura = 400, altura = 230;
+    var esq = Math.max(0, (raiz.screen && raiz.screen.width ? raiz.screen.width - largura - 30 : 40));
+    var topo = 60;
+
+    var j;
+    try {
+      j = raiz.open(
+        "",
+        NOME_DA_JANELA,
+        "width=" + largura + ",height=" + altura + ",left=" + esq + ",top=" + topo +
+          ",menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no"
+      );
+    } catch (e) {
+      j = null;
+    }
+
+    if (!j) { janelaAviso = false; return null; }
+    janelaAviso = j;
+
+    try {
+      j.document.open();
+      j.document.write(
+        "<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'>" +
+          "<title>" + escapar(o.titulo || "Paciente na fila") + "</title>" +
+          "<style>" +
+          "html,body{margin:0;height:100%;font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;}" +
+          "body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;" +
+          "background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;text-align:center;padding:20px;}" +
+          "h1{margin:0;font-size:20px;}p{margin:0;font-size:15px;opacity:.95;}" +
+          "small{opacity:.8;font-size:12px;}" +
+          "</style></head><body>" +
+          "<h1>" + escapar(o.titulo || "Paciente na fila") + "</h1>" +
+          "<p>" + escapar(o.corpo || "") + "</p>" +
+          "<small>Volte ao Meeds para atender. Esta janela pode ser fechada.</small>" +
+          "</body></html>"
+      );
+      j.document.close();
+    } catch (e) {
+      /* silencioso: a janela abriu, so nao deu para escrever nela */
+    }
+    return j;
+  }
+
+  function escapar(txt) {
+    return String(txt || "").replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function fecharJanelaDeAviso() {
+    try {
+      if (janelaAviso && janelaAviso !== false && !janelaAviso.closed) janelaAviso.close();
+    } catch (e) {
+      /* silencioso */
+    }
+    if (janelaAviso !== false) janelaAviso = null;
+  }
+
   function limpar() {
     limparTitulo();
     limparFavicone();
@@ -384,6 +504,11 @@
     pedirPermissaoDeNotificacao: pedirPermissaoDeNotificacao,
     suportaTelaAcesa: suportaTelaAcesa,
     manterTelaAcesa: manterTelaAcesa,
+    suportaJanela: suportaJanela,
+    janelaBloqueada: janelaBloqueada,
+    ehIOS: ehIOS,
+    abrirJanelaDeAviso: abrirJanelaDeAviso,
+    fecharJanelaDeAviso: fecharJanelaDeAviso,
     /* expostos para teste */
     _marcarTitulo: marcarTitulo,
     _limparTitulo: limparTitulo,

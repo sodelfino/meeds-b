@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Meeds B — Alarme de fila
 // @namespace    novetech-meeds-b
-// @version      1.0.0
+// @version      1.1.0
 // @description  Avisa quando entra paciente na fila do Pronto Atendimento do Meeds Doctor, mesmo com a aba de fundo ou o navegador minimizado. Nenhum dado de paciente e lido ou gravado.
 // @author       Marcelo
 // @match        https://doctor.calltechsaude.com.br/*
@@ -383,6 +383,126 @@
     return null;
   }
 
+  /* ------------------------------------------------------------------
+   * JANELA DE AVISO (pop-up do navegador)
+   * ------------------------------------------------------------------
+   * Terceiro canal, e o mais barulhento dos tres. A notificacao do
+   * sistema aparece e some; a janela FICA na barra de tarefas ate alguem
+   * fechar. Para quem trabalha com varias janelas abertas e perde a
+   * notificacao no canto, e a diferenca entre ver e nao ver.
+   *
+   * DUAS RAZOES PARA ELA NAO SER PADRAO:
+   *   1. o Chrome bloqueia pop-up nao pedido por clique, e este e
+   *      disparado por chegada de paciente, nao por gesto do medico —
+   *      so funciona depois que o site ganha a permissao de pop-up;
+   *   2. uma janela que rouba o foco no meio de uma teleconsulta e pior
+   *      que o problema que resolve.
+   * Por isso ela e opcional, nasce desligada, e nunca chama focus().
+   *
+   * PRIVACIDADE: mesma regra da notificacao — quantidade e tempo, nunca
+   * nome de paciente. A janela pode ficar aberta atras de outras e
+   * aparecer em compartilhamento de tela.
+   * ------------------------------------------------------------------ */
+  var NOME_DA_JANELA = "meeds-aviso-fila";
+  var janelaAviso = null;
+
+  /* ------------------------------------------------------------------
+   * iPad / iPhone: a janela nao existe, e nao adianta pedir permissao
+   * ------------------------------------------------------------------
+   * `raiz.open` EXISTE no Safari do iOS, entao testar por ele daria
+   * "suportado" e a opcao apareceria ligavel. So que ali nao ha janela
+   * nenhuma: o iOS abre uma ABA nova, em cima do Meeds, e so a partir de
+   * um gesto do medico — este aviso e disparado por chegada de paciente.
+   * Na pratica: ou nao acontece nada, ou o Meeds sai da frente sozinho.
+   *
+   * Pior que a funcao nao funcionar era o que a tela dizia antes: mandava
+   * o medico "clicar no icone de pop-up bloqueado na barra de endereco",
+   * que no iPad nao existe. Instrucao que nao pode ser seguida gasta o
+   * plantao e ensina a desconfiar do resto do painel.
+   *
+   * iPadOS 13+ se identifica como Mac; o que separa os dois e ter mais de
+   * um ponto de toque.
+   * ------------------------------------------------------------------ */
+  function ehIOS() {
+    var ua = (raiz.navigator && raiz.navigator.userAgent) || "";
+    if (/Windows|Android/.test(ua)) return false;
+    var pareceApple = /iPad|iPhone|iPod|Macintosh/.test(ua);
+    return pareceApple && ((raiz.navigator && raiz.navigator.maxTouchPoints) || 0) > 1;
+  }
+
+  function suportaJanela() {
+    if (ehIOS()) return false;
+    return typeof raiz.open === "function";
+  }
+
+  function janelaBloqueada() {
+    /* Chrome devolve null quando bloqueia. Guardamos o resultado para a
+     * tela poder dizer ao medico o que aconteceu, em vez de ele achar
+     * que a opcao nao faz nada. */
+    return janelaAviso === false;
+  }
+
+  function abrirJanelaDeAviso(opcoes) {
+    var o = opcoes || {};
+    if (!suportaJanela()) return null;
+    var largura = 400, altura = 230;
+    var esq = Math.max(0, (raiz.screen && raiz.screen.width ? raiz.screen.width - largura - 30 : 40));
+    var topo = 60;
+
+    var j;
+    try {
+      j = raiz.open(
+        "",
+        NOME_DA_JANELA,
+        "width=" + largura + ",height=" + altura + ",left=" + esq + ",top=" + topo +
+          ",menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no"
+      );
+    } catch (e) {
+      j = null;
+    }
+
+    if (!j) { janelaAviso = false; return null; }
+    janelaAviso = j;
+
+    try {
+      j.document.open();
+      j.document.write(
+        "<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'>" +
+          "<title>" + escapar(o.titulo || "Paciente na fila") + "</title>" +
+          "<style>" +
+          "html,body{margin:0;height:100%;font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;}" +
+          "body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;" +
+          "background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;text-align:center;padding:20px;}" +
+          "h1{margin:0;font-size:20px;}p{margin:0;font-size:15px;opacity:.95;}" +
+          "small{opacity:.8;font-size:12px;}" +
+          "</style></head><body>" +
+          "<h1>" + escapar(o.titulo || "Paciente na fila") + "</h1>" +
+          "<p>" + escapar(o.corpo || "") + "</p>" +
+          "<small>Volte ao Meeds para atender. Esta janela pode ser fechada.</small>" +
+          "</body></html>"
+      );
+      j.document.close();
+    } catch (e) {
+      /* silencioso: a janela abriu, so nao deu para escrever nela */
+    }
+    return j;
+  }
+
+  function escapar(txt) {
+    return String(txt || "").replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function fecharJanelaDeAviso() {
+    try {
+      if (janelaAviso && janelaAviso !== false && !janelaAviso.closed) janelaAviso.close();
+    } catch (e) {
+      /* silencioso */
+    }
+    if (janelaAviso !== false) janelaAviso = null;
+  }
+
   function limpar() {
     limparTitulo();
     limparFavicone();
@@ -400,6 +520,11 @@
     pedirPermissaoDeNotificacao: pedirPermissaoDeNotificacao,
     suportaTelaAcesa: suportaTelaAcesa,
     manterTelaAcesa: manterTelaAcesa,
+    suportaJanela: suportaJanela,
+    janelaBloqueada: janelaBloqueada,
+    ehIOS: ehIOS,
+    abrirJanelaDeAviso: abrirJanelaDeAviso,
+    fecharJanelaDeAviso: fecharJanelaDeAviso,
     /* expostos para teste */
     _marcarTitulo: marcarTitulo,
     _limparTitulo: limparTitulo,
@@ -409,12 +534,24 @@
 
 /* ===== src/som.js ===== */
 /* ------------------------------------------------------------------
- * src/som.js — os quatro sons do alarme
+ * src/som.js — a biblioteca de sons do alarme
  * ------------------------------------------------------------------
  * Sintetizados por osciladores (Web Audio), sem arquivo externo: o
  * alarme precisa tocar mesmo com a rede da unidade ruim, e um mp3 que
- * nao baixou e um alarme mudo. Copiado do Assistente Meeds
+ * nao baixou e um alarme mudo. Vem do Assistente Meeds
  * (sodelfino/meeds-suite), onde ja rodou plantao de verdade.
+ *
+ * SAO DUAS LISTAS, E O CAMPO `curto` E QUEM AS SEPARA
+ * As sirenes foram feitas para REPETIR: tocadas uma vez so, soam
+ * truncadas — comecam e param no meio da ideia. Os sons `curto: true`
+ * tem comeco, meio e fim em menos de um segundo e terminam decaindo em
+ * vez de cortar. O modo discreto usa os curtos; o completo, os que
+ * repetem. `tests/som.test.js` cobra o campo de todo som novo.
+ *
+ * Todos sobem o ganho a partir de ZERO em alguns milissegundos e descem
+ * quase a zero antes de parar o oscilador. Sem essa rampa o navegador
+ * produz um estalo no inicio e no fim — audivel, feio, e pior ainda num
+ * fone de plantao noturno.
  * ------------------------------------------------------------------ */
 (function (raiz) {
   "use strict";
@@ -422,6 +559,7 @@
   var TIPOS_DE_SOM = {
     "sirene-classica": {
       nome: "Sirene clássica (2 notas)",
+      curto: false,
       intervaloMs: 1100,
       tocar: function (ctx, volume) {
         var agora = ctx.currentTime;
@@ -442,6 +580,7 @@
     },
     "sirene-ambulancia": {
       nome: "Sirene rápida (estilo ambulância)",
+      curto: false,
       intervaloMs: 1050,
       tocar: function (ctx, volume) {
         var agora = ctx.currentTime;
@@ -461,6 +600,7 @@
     },
     "alarme-incendio": {
       nome: "Alarme (bipes curtos repetidos)",
+      curto: false,
       intervaloMs: 700,
       tocar: function (ctx, volume) {
         var base = ctx.currentTime;
@@ -480,6 +620,7 @@
     },
     campainha: {
       nome: "Campainha (mais suave)",
+      curto: false,
       intervaloMs: 2000,
       tocar: function (ctx, volume) {
         var agora = ctx.currentTime;
@@ -500,7 +641,174 @@
         });
       },
     },
-  };
+  
+    /* ----------------------------------------------------------------
+     * SONS DE TOQUE UNICO (modo discreto)
+     * ----------------------------------------------------------------
+     * As quatro sirenes acima foram feitas para REPETIR: tocadas uma vez
+     * so, soam truncadas — comecam e param no meio da ideia. Estas tem
+     * comeco, meio e fim em menos de um segundo, e terminam decaindo em
+     * vez de cortar.
+     *
+     * Todas sobem o ganho a partir de ZERO em alguns milissegundos e
+     * descem quase a zero antes de parar o oscilador. Sem essa rampa o
+     * navegador produz um estalo no inicio e no fim — audivel, feio, e
+     * pior ainda num fone de plantao noturno.
+     * ---------------------------------------------------------------- */
+    "toque-duplo": {
+      nome: "Toque duplo (dois tons)",
+      curto: true,
+      intervaloMs: 1200,
+      tocar: function (ctx, volume) {
+        var agora = ctx.currentTime;
+        [{ f: 880, t: 0 }, { f: 1174.7, t: 0.13 }].forEach(function (n) {
+          var osc = ctx.createOscillator();
+          var g = ctx.createGain();
+          osc.type = "triangle";
+          osc.frequency.setValueAtTime(n.f, agora + n.t);
+          g.gain.setValueAtTime(0.0001, agora + n.t);
+          g.gain.linearRampToValueAtTime(0.32 * volume, agora + n.t + 0.012);
+          g.gain.exponentialRampToValueAtTime(0.0008, agora + n.t + 0.34);
+          osc.connect(g).connect(ctx.destination);
+          osc.start(agora + n.t);
+          osc.stop(agora + n.t + 0.36);
+        });
+      },
+    },
+    "sino-curto": {
+      nome: "Sino curto",
+      curto: true,
+      intervaloMs: 1400,
+      tocar: function (ctx, volume) {
+        var agora = ctx.currentTime;
+        /* Um sino e a fundamental MAIS um parcial agudo que morre antes
+         * dela — e o que separa "sino" de "bipe". */
+        [{ f: 1568, v: 0.3, d: 0.9 }, { f: 2350, v: 0.12, d: 0.35 }].forEach(function (n) {
+          var osc = ctx.createOscillator();
+          var g = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(n.f, agora);
+          g.gain.setValueAtTime(0.0001, agora);
+          g.gain.linearRampToValueAtTime(n.v * volume, agora + 0.008);
+          g.gain.exponentialRampToValueAtTime(0.0006, agora + n.d);
+          osc.connect(g).connect(ctx.destination);
+          osc.start(agora);
+          osc.stop(agora + n.d + 0.02);
+        });
+      },
+    },
+    "gota": {
+      nome: "Gota (bem discreto)",
+      curto: true,
+      intervaloMs: 900,
+      tocar: function (ctx, volume) {
+        var agora = ctx.currentTime;
+        var osc = ctx.createOscillator();
+        var g = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(1250, agora);
+        osc.frequency.exponentialRampToValueAtTime(620, agora + 0.14);
+        g.gain.setValueAtTime(0.0001, agora);
+        g.gain.linearRampToValueAtTime(0.3 * volume, agora + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0007, agora + 0.28);
+        osc.connect(g).connect(ctx.destination);
+        osc.start(agora);
+        osc.stop(agora + 0.3);
+      },
+    },
+    "acorde-suave": {
+      nome: "Acorde suave (três notas)",
+      curto: true,
+      intervaloMs: 1600,
+      tocar: function (ctx, volume) {
+        var agora = ctx.currentTime;
+        [523.25, 659.25, 783.99].forEach(function (f, i) {
+          var t = i * 0.075;
+          var osc = ctx.createOscillator();
+          var g = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(f, agora + t);
+          g.gain.setValueAtTime(0.0001, agora + t);
+          g.gain.linearRampToValueAtTime(0.22 * volume, agora + t + 0.015);
+          g.gain.exponentialRampToValueAtTime(0.0006, agora + t + 0.55);
+          osc.connect(g).connect(ctx.destination);
+          osc.start(agora + t);
+          osc.stop(agora + t + 0.58);
+        });
+      },
+    },
+    "dois-cliques": {
+      nome: "Dois cliques (quase mudo)",
+      curto: true,
+      intervaloMs: 800,
+      tocar: function (ctx, volume) {
+        var agora = ctx.currentTime;
+        /* Para quem divide a sala com outro profissional e nao quer que o
+         * alarme vire assunto da consulta ao lado. */
+        [0, 0.09].forEach(function (t) {
+          var osc = ctx.createOscillator();
+          var g = ctx.createGain();
+          osc.type = "square";
+          osc.frequency.setValueAtTime(2100, agora + t);
+          g.gain.setValueAtTime(0.0001, agora + t);
+          g.gain.linearRampToValueAtTime(0.12 * volume, agora + t + 0.004);
+          g.gain.exponentialRampToValueAtTime(0.0005, agora + t + 0.035);
+          osc.connect(g).connect(ctx.destination);
+          osc.start(agora + t);
+          osc.stop(agora + t + 0.04);
+        });
+      },
+    },
+
+    /* ----------------------------------------------------------------
+     * MAIS DUAS PARA O MODO COMPLETO
+     * ---------------------------------------------------------------- */
+    "pulso-grave": {
+      nome: "Pulso grave (plantão noturno)",
+      curto: false,
+      intervaloMs: 1300,
+      tocar: function (ctx, volume) {
+        var agora = ctx.currentTime;
+        /* Grave atravessa parede e cansa menos que agudo. Pensado para a
+         * madrugada, quando o estridente e justamente o que faz o medico
+         * desligar o alarme — e perder o paciente seguinte. */
+        [0, 0.42].forEach(function (t) {
+          var osc = ctx.createOscillator();
+          var g = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(196, agora + t);
+          osc.frequency.linearRampToValueAtTime(233, agora + t + 0.3);
+          g.gain.setValueAtTime(0.0001, agora + t);
+          g.gain.linearRampToValueAtTime(0.42 * volume, agora + t + 0.03);
+          g.gain.exponentialRampToValueAtTime(0.0008, agora + t + 0.34);
+          osc.connect(g).connect(ctx.destination);
+          osc.start(agora + t);
+          osc.stop(agora + t + 0.36);
+        });
+      },
+    },
+    "sirene-lenta": {
+      nome: "Sirene lenta (menos estridente)",
+      curto: false,
+      intervaloMs: 1500,
+      tocar: function (ctx, volume) {
+        var agora = ctx.currentTime;
+        var osc = ctx.createOscillator();
+        var g = ctx.createGain();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(560, agora);
+        osc.frequency.linearRampToValueAtTime(760, agora + 0.55);
+        osc.frequency.linearRampToValueAtTime(560, agora + 1.1);
+        g.gain.setValueAtTime(0.0001, agora);
+        g.gain.linearRampToValueAtTime(0.34 * volume, agora + 0.06);
+        g.gain.setValueAtTime(0.34 * volume, agora + 1.0);
+        g.gain.linearRampToValueAtTime(0.0001, agora + 1.12);
+        osc.connect(g).connect(ctx.destination);
+        osc.start(agora);
+        osc.stop(agora + 1.15);
+      },
+    },
+};
 
   raiz.MeedsBSom = TIPOS_DE_SOM;
 })(typeof unsafeWindow !== "undefined" ? unsafeWindow : typeof window !== "undefined" ? window : globalThis);
@@ -731,7 +1039,72 @@
   var SONS = raiz.MeedsBSom;
 
   var CHAVE_CONFIG = "meeds-b:config";
-  var PADRAO = { ativo: true, som: "sirene-classica", volume: 70 };
+  var PADRAO = {
+    ativo: true,
+    som: "sirene-classica",       // usado no modo completo (repete)
+    somCurto: "toque-duplo",      // usado no modo discreto (toca uma vez)
+    volume: 70,
+    intensidade: "completo",      // "silencioso" | "discreto" | "completo"
+    janela: false,                // pop-up: opcional, nasce desligado
+  };
+
+  /* ------------------------------------------------------------------
+   * AS TRES INTENSIDADES (o botao de som do Waze)
+   * ------------------------------------------------------------------
+   * Um alarme com duas posicoes — berrando ou mudo — obriga o medico a
+   * escolher entre ser interrompido no meio de uma consulta e nao ficar
+   * sabendo que chegou gente. Com tres, ele escolhe quanto de
+   * interrupcao cabe no momento, e nao precisa desligar tudo.
+   *
+   * A escada de atencao (titulo, favicone, notificacao do sistema) vale
+   * nos tres: ela e sobre ONDE avisar, nao sobre o quanto incomodar.
+   *
+   * DIFERENCA EM RELACAO AO ASSISTENTE MEEDS
+   * La o modo discreto mostra um cartao com QUEM chegou e DE ONDE. Aqui
+   * nao: este script nao le dado de paciente em lugar nenhum (ver o
+   * cabecalho de src/fila.js), e trazer o cartao junto contrariaria a
+   * propria regra que ele declara. O discreto daqui e som curto e mais
+   * nada na tela.
+   * ------------------------------------------------------------------ */
+  var INTENSIDADES = {
+    silencioso: {
+      rotulo: "Silencioso",
+      icone: "🔕",
+      resumo: "Só o contador na aba e no favicone. Nada de som nem de aviso na tela.",
+      som: false, banner: false,
+    },
+    discreto: {
+      rotulo: "Discreto",
+      icone: "🔉",
+      resumo: "Um som curto, uma vez. Sem faixa e sem moldura na tela.",
+      som: "curto", banner: false,
+    },
+    completo: {
+      rotulo: "Completo",
+      icone: "🔔",
+      resumo: "Sirene repetindo, faixa no topo e moldura na tela até você silenciar.",
+      som: "repetido", banner: true,
+    },
+  };
+
+  var ORDEM_INTENSIDADE = ["completo", "discreto", "silencioso"];
+
+  function intensidadeAtual() {
+    return INTENSIDADES[config.intensidade] || INTENSIDADES.completo;
+  }
+
+  /* O som que vale AGORA depende da intensidade: as sirenes foram feitas
+   * para repetir e soam truncadas tocadas uma vez so. Ver src/som.js. */
+  function somDaVez() {
+    var curto = intensidadeAtual().som === "curto";
+    var id = curto ? config.somCurto : config.som;
+    var escolhido = SONS[id];
+    if (escolhido && !!escolhido.curto === curto) return escolhido;
+    /* Preferencia invalida (som removido da biblioteca, ou gravado no
+     * campo errado): cai no primeiro da lista certa em vez de ficar mudo. */
+    var ids = Object.keys(SONS).filter(function (k) { return !!SONS[k].curto === curto; });
+    return SONS[ids[0]];
+  }
 
   var DEBOUNCE_MS = 2500;         // dois sinais da mesma chegada = um alarme
   var DURACAO_MAX_SOM_MS = 120000; // trava: a sirene nunca toca para sempre
@@ -782,10 +1155,17 @@
 
   function carregarConfig() {
     var guardado = ler() || {};
+    /* Cada campo e validado contra a biblioteca ATUAL: um som removido
+     * numa atualizacao nao pode deixar o alarme mudo. */
+    var somOk = SONS[guardado.som] && !SONS[guardado.som].curto;
+    var curtoOk = SONS[guardado.somCurto] && SONS[guardado.somCurto].curto;
     config = {
       ativo: guardado.ativo !== false,
-      som: SONS[guardado.som] ? guardado.som : PADRAO.som,
+      som: somOk ? guardado.som : PADRAO.som,
+      somCurto: curtoOk ? guardado.somCurto : PADRAO.somCurto,
       volume: Math.min(100, Math.max(0, parseInt(guardado.volume, 10) || PADRAO.volume)),
+      intensidade: INTENSIDADES[guardado.intensidade] ? guardado.intensidade : PADRAO.intensidade,
+      janela: guardado.janela === true,
     };
   }
 
@@ -801,11 +1181,12 @@
     return audioCtx;
   }
 
-  function tocarUmaVez() {
+  function tocarUmaVez(somEspecifico) {
     try {
       var ctx = contexto();
       if (!ctx) return;
-      (SONS[config.som] || SONS[PADRAO.som]).tocar(ctx, config.volume / 100);
+      var som = somEspecifico || somDaVez();
+      if (som) som.tocar(ctx, config.volume / 100);
     } catch (e) {
       /* silencioso */
     }
@@ -839,20 +1220,41 @@
 
   function dispararAlarme() {
     if (tocando) return;
+    var modo = intensidadeAtual();
     tocando = true;
     chegadaEm = Date.now();
-    atualizarBanner();
-    if (elBanner) elBanner.hidden = false;
-    if (elMoldura) elMoldura.hidden = false;
+
+    /* Faixa e moldura so no modo completo. No discreto o aviso e o som
+     * curto mais a escada de atencao; no silencioso, so a escada. */
+    if (modo.banner) {
+      atualizarBanner();
+      if (elBanner) elBanner.hidden = false;
+      if (elMoldura) elMoldura.hidden = false;
+    }
+
     marcarAtencao(true);
-    tocarUmaVez();
-    var tipo = SONS[config.som] || SONS[PADRAO.som];
-    intervaloSirene = setInterval(tocarUmaVez, tipo.intervaloMs);
-    /* Trava de seguranca: uma sirene que ninguem silencia nao pode tocar
-     * o plantao inteiro. Ao bater o limite ela faz uma parada COMPLETA,
-     * que devolve `tocando` a false — senao o alarme travaria em silencio
-     * para sempre depois da primeira vez. */
-    timeoutLimite = setTimeout(silenciarComReengate, DURACAO_MAX_SOM_MS);
+
+    if (modo.som === "repetido") {
+      tocarUmaVez();
+      var tipo = somDaVez();
+      intervaloSirene = setInterval(function () { tocarUmaVez(); }, tipo.intervaloMs);
+      /* Trava de seguranca: uma sirene que ninguem silencia nao pode tocar
+       * o plantao inteiro. Ao bater o limite ela faz uma parada COMPLETA,
+       * que devolve `tocando` a false — senao o alarme travaria em silencio
+       * para sempre depois da primeira vez. */
+      timeoutLimite = setTimeout(silenciarComReengate, DURACAO_MAX_SOM_MS);
+    } else if (modo.som === "curto") {
+      tocarUmaVez();
+      /* Um toque unico nao tem o que silenciar: o estado volta sozinho,
+       * senao o proximo paciente nao dispararia nada (o guard `tocando`
+       * do topo barraria). O reengate continua valendo, porque a fila
+       * cheia sem ninguem atender ainda precisa insistir. */
+      timeoutLimite = setTimeout(silenciarComReengate, 4000);
+    } else {
+      /* Silencioso: nada a tocar nem a esconder, mas o ciclo precisa se
+       * fechar do mesmo jeito. */
+      timeoutLimite = setTimeout(silenciarComReengate, 4000);
+    }
   }
 
   function pararSom() {
@@ -867,6 +1269,9 @@
     chegadaEm = null;
     if (elBanner) elBanner.hidden = true;
     if (elMoldura) elMoldura.hidden = true;
+    /* A janela fecha junto com o silenciar: ela existe para chamar de
+     * volta, e quem silenciou ja voltou. */
+    if (Atencao) Atencao.fecharJanelaDeAviso();
     /* O distintivo NAO some aqui: silenciar o som nao tira o paciente da
      * fila. Ele so some quando a fila esvazia. */
     marcarAtencao(false);
@@ -887,7 +1292,23 @@
   function marcarAtencao(podeNotificar) {
     if (!Atencao) return;
     var n = quantosAguardando();
-    if (n <= 0) { Atencao.limpar(); return; }
+    if (n <= 0) {
+      Atencao.limpar();
+      Atencao.fecharJanelaDeAviso();
+      return;
+    }
+
+    /* Terceiro canal, e o mais barulhento: a notificacao do sistema
+     * aparece e some, a janela FICA na barra de tarefas ate alguem
+     * fechar. So abre quando o medico esta FORA da aba — abrir uma
+     * janela por cima de quem ja esta olhando o Meeds e so atrapalhar. */
+    if (config.janela && podeNotificar && Atencao.ondeEstaOMedico() === "fora") {
+      Atencao.abrirJanelaDeAviso({
+        titulo: "Paciente na fila",
+        corpo: textoDoMotivo(),
+      });
+    }
+
     Atencao.marcar({
       contagem: n,
       notificar: !!podeNotificar,
@@ -1030,6 +1451,10 @@
     "#mb-painel h2 { margin: 0 0 12px; font-size: 15px; }",
     "#mb-painel label { display: block; font-size: 12px; font-weight: 600; color: #334155; margin: 12px 0 5px; }",
     "#mb-painel select, #mb-painel input[type=range] { width: 100%; box-sizing: border-box; }",
+    "#mb-painel label.mb-linha { display:flex; align-items:center; gap:8px; font-weight:600; color:#1e293b; margin:12px 0 4px; cursor:pointer; }",
+    "#mb-painel label.mb-linha input { width:auto; margin:0; }",
+    "#mb-painel label.mb-linha[hidden] { display:none; }",
+    "#mb-painel .mb-dica { font-size:11px; color:#94a3b8; line-height:1.45; margin:2px 0 4px; }",
     "#mb-painel select { padding: 8px; border-radius: 8px; border: 1.5px solid #cbd5e1; font: inherit; }",
     "#mb-estado { font-size: 11.5px; color: #475569; line-height: 1.5; margin-top: 12px; }",
     "#mb-painel button.acao {",
@@ -1059,9 +1484,21 @@
       '<button type="button" id="mb-botao" title="Alarme de fila"></button>' +
       '<div id="mb-painel" hidden>' +
       "  <h2>Alarme de fila</h2>" +
-      '  <label for="mb-som">Som</label><select id="mb-som"></select>' +
+      '  <label class="mb-linha" for="mb-ativo"><input type="checkbox" id="mb-ativo" /> Alarme ligado</label>' +
+      '  <label for="mb-intensidade">Quanto ele deve incomodar</label>' +
+      '  <select id="mb-intensidade">' +
+      '    <option value="completo">🔔 Completo</option>' +
+      '    <option value="discreto">🔉 Discreto</option>' +
+      '    <option value="silencioso">🔕 Silencioso</option>' +
+      "  </select>" +
+      '  <div class="mb-dica" id="mb-intensidade-dica"></div>' +
+      '  <label for="mb-som" id="mb-som-rotulo">Som</label><select id="mb-som"></select>' +
       '  <label for="mb-volume">Volume</label><input type="range" id="mb-volume" min="0" max="100" step="5" />' +
       '  <button type="button" class="acao" id="mb-testar">🔊 Testar som</button>' +
+      '  <label class="mb-linha" id="mb-janela-linha" for="mb-janela" hidden>' +
+      '    <input type="checkbox" id="mb-janela" /> Abrir uma janela de aviso' +
+      "  </label>" +
+      '  <div class="mb-dica" id="mb-janela-dica"></div>' +
       '  <div id="mb-estado"></div>' +
       '  <button type="button" class="acao" id="mb-liberar" hidden>Ativar avisos do sistema</button>' +
       "</div>";
@@ -1072,18 +1509,19 @@
     elPainel = shadow.getElementById("mb-painel");
 
     var sel = shadow.getElementById("mb-som");
-    Object.keys(SONS).forEach(function (id) {
-      var o = document.createElement("option");
-      o.value = id;
-      o.textContent = SONS[id].nome;
-      sel.appendChild(o);
-    });
 
+    /* Como o botao de som do Waze: um toque cicla entre as intensidades,
+     * em vez de so ligar e desligar. Desligar de vez continua existindo —
+     * e a chave no painel. Aqui a escolha e "quanto", nao "se". */
     elBotao.addEventListener("click", function (ev) {
       if (ev.shiftKey) return abrirPainel();
-      config.ativo = !config.ativo;
+      /* Aproveita o gesto para destravar o audio: o navegador so deixa
+       * tocar som depois de uma interacao do usuario. */
+      contexto();
+      var i = ORDEM_INTENSIDADE.indexOf(config.intensidade);
+      config.intensidade = ORDEM_INTENSIDADE[(i + 1) % ORDEM_INTENSIDADE.length];
+      if (config.intensidade === "silencioso" && tocando) silenciarAlarme();
       gravar();
-      if (!config.ativo) silenciarAlarme();
       refletir();
     });
     elBotao.addEventListener("contextmenu", function (ev) {
@@ -1091,7 +1529,46 @@
       abrirPainel();
     });
     shadow.getElementById("mb-silenciar").addEventListener("click", silenciarComReengate);
-    sel.addEventListener("change", function () { config.som = sel.value; gravar(); });
+    sel.addEventListener("change", function () {
+      if (intensidadeAtual().som === "curto") config.somCurto = sel.value;
+      else config.som = sel.value;
+      gravar();
+      /* Toca a amostra na hora. Antes era preciso escolher e depois
+       * clicar em "Testar" — dois passos para responder "como e esse?",
+       * que e a unica pergunta que existe ao mexer nessa lista. */
+      contexto();
+      tocarUmaVez(SONS[sel.value]);
+    });
+
+    shadow.getElementById("mb-ativo").addEventListener("change", function (ev) {
+      config.ativo = ev.target.checked;
+      gravar();
+      if (!config.ativo) silenciarAlarme();
+      refletir();
+    });
+
+    shadow.getElementById("mb-intensidade").addEventListener("change", function (ev) {
+      config.intensidade = ev.target.value;
+      if (config.intensidade === "silencioso" && tocando) silenciarAlarme();
+      gravar();
+      refletir();
+    });
+
+    shadow.getElementById("mb-janela").addEventListener("change", function (ev) {
+      config.janela = ev.target.checked;
+      gravar();
+      /* Abre uma de teste no ato: e a unica forma de o medico descobrir
+       * AGORA que o navegador bloqueia pop-up, em vez de as 3 da manha
+       * quando o aviso nao vier. */
+      if (config.janela && Atencao) {
+        Atencao.abrirJanelaDeAviso({
+          titulo: "Janela de aviso ligada",
+          corpo: "É assim que ela vai aparecer quando chegar paciente.",
+        });
+        setTimeout(function () { Atencao.fecharJanelaDeAviso(); }, 3000);
+      }
+      refletirJanela();
+    });
     shadow.getElementById("mb-volume").addEventListener("input", function (ev) {
       config.volume = parseInt(ev.target.value, 10);
       gravar();
@@ -1135,14 +1612,92 @@
 
   function refletir() {
     if (!elBotao) return;
-    elBotao.textContent = config.ativo ? "🔔" : "🔕";
-    elBotao.className = config.ativo ? "ligado" : "desligado";
-    elBotao.title =
-      (config.ativo ? "Alarme LIGADO" : "Alarme desligado") +
-      " — clique para alternar, clique direito para configurar";
+    var modo = intensidadeAtual();
+    /* Desligado vence a intensidade no que o botao mostra: com a funcao
+     * fora do ar, exibir "Completo" seria mentir sobre o que vai
+     * acontecer quando chegar paciente. */
+    elBotao.textContent = config.ativo ? modo.icone : "⛔";
+    elBotao.className = config.ativo
+      ? config.intensidade === "silencioso" ? "desligado" : "ligado"
+      : "desligado";
+    elBotao.title = config.ativo
+      ? "Alarme: " + modo.rotulo + " — " + modo.resumo +
+        " Clique para trocar, clique direito para configurar."
+      : "Alarme DESLIGADO — clique direito para configurar";
+
     if (shadow) {
-      shadow.getElementById("mb-som").value = config.som;
+      var curto = modo.som === "curto";
+      preencherSons(curto);
+      var sel = shadow.getElementById("mb-som");
+      if (sel) sel.value = curto ? config.somCurto : config.som;
+      var rotuloSom = shadow.getElementById("mb-som-rotulo");
+      if (rotuloSom) {
+        rotuloSom.textContent = curto ? "Som curto (modo discreto)" : "Som (modo completo)";
+      }
+      /* No silencioso nao toca som nenhum. Deixar a lista e o botao de
+       * testar ativos ali seria oferecer um controle que nao faz nada —
+       * o medico mexe, nao ouve, e conclui que o alarme quebrou. */
+      var mudo = modo.som === false;
+      var testar = shadow.getElementById("mb-testar");
+      if (sel) sel.disabled = mudo;
+      if (testar) testar.disabled = mudo;
+      if (rotuloSom) rotuloSom.style.opacity = mudo ? ".45" : "";
       shadow.getElementById("mb-volume").value = config.volume;
+      var chaveAtivo = shadow.getElementById("mb-ativo");
+      if (chaveAtivo) chaveAtivo.checked = config.ativo;
+      var dica = shadow.getElementById("mb-intensidade-dica");
+      if (dica) dica.textContent = modo.resumo;
+      var selInt = shadow.getElementById("mb-intensidade");
+      if (selInt) selInt.value = config.intensidade;
+      refletirJanela();
+    }
+  }
+
+  /* A lista de sons muda com a intensidade: no discreto so aparecem os
+   * curtos, no completo so os que repetem. Mostrar os onze sempre faria
+   * o medico escolher uma sirene para o modo que toca uma vez so — e ela
+   * sairia truncada, sem ele entender por que. */
+  function preencherSons(curto) {
+    var sel = shadow.getElementById("mb-som");
+    if (!sel) return;
+    var querido = curto ? config.somCurto : config.som;
+    if (sel.getAttribute("data-curto") === String(curto)) return; // ja esta certa
+    sel.setAttribute("data-curto", String(curto));
+    sel.innerHTML = "";
+    Object.keys(SONS)
+      .filter(function (id) { return !!SONS[id].curto === curto; })
+      .forEach(function (id) {
+        var o = document.createElement("option");
+        o.value = id;
+        o.textContent = SONS[id].nome;
+        sel.appendChild(o);
+      });
+    sel.value = querido;
+  }
+
+  /* A janela de aviso depende de coisas que a tela precisa dizer: no
+   * iPad ela nao existe, e no Chrome pode ter sido bloqueada. Uma chave
+   * que nao explica por que nao funcionou vira desconfianca no resto. */
+  function refletirJanela() {
+    var linha = shadow.getElementById("mb-janela-linha");
+    var chave = shadow.getElementById("mb-janela");
+    var dica = shadow.getElementById("mb-janela-dica");
+    if (!linha || !chave || !Atencao) return;
+
+    if (!Atencao.suportaJanela()) {
+      /* No iPad nao ha janela: o iOS abre uma ABA por cima do Meeds, e
+       * so a partir de um gesto. Oferecer a opcao ali seria oferecer algo
+       * que nao acontece — e a instrucao de desbloquear pop-up fala de um
+       * icone na barra de enderecos que o iPad nao tem. */
+      linha.hidden = true;
+      return;
+    }
+    linha.hidden = false;
+    chave.checked = !!config.janela;
+    if (dica) {
+      dica.textContent = Atencao.janelaBloqueada()
+        ? "O navegador bloqueou a janela. Procure o ícone de pop-up bloqueado na barra de endereço e permita para este site."
+        : "Abre uma janelinha que fica na barra de tarefas até você fechar. Só aparece quando você está fora da aba do Meeds.";
     }
   }
 
