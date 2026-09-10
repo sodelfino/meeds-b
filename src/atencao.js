@@ -206,7 +206,7 @@
    * cada funcao degrada em silencio, e o alarme na tela continua sendo o
    * canal principal.
    * ------------------------------------------------------------------ */
-  var TAG_PADRAO = "meeds-suite";
+  var TAG_PADRAO = "meeds-b";
 
   function suportaNotificacao() {
     return typeof raiz.Notification === "function";

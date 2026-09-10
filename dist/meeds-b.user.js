@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Meeds B — Alarme de fila
 // @namespace    novetech-meeds-b
-// @version      1.1.0
+// @version      1.1.1
 // @description  Avisa quando entra paciente na fila do Pronto Atendimento do Meeds Doctor, mesmo com a aba de fundo ou o navegador minimizado. Nenhum dado de paciente e lido ou gravado.
 // @author       Marcelo
 // @match        https://doctor.calltechsaude.com.br/*
@@ -222,7 +222,7 @@
    * cada funcao degrada em silencio, e o alarme na tela continua sendo o
    * canal principal.
    * ------------------------------------------------------------------ */
-  var TAG_PADRAO = "meeds-suite";
+  var TAG_PADRAO = "meeds-b";
 
   function suportaNotificacao() {
     return typeof raiz.Notification === "function";
