@@ -32,8 +32,14 @@
   var SONS = raiz.MeedsBSom;
 
   var CHAVE_CONFIG = "meeds-b:config";
+  /* NAO HA MAIS liga/desliga separado. Ate a v1.1.1 existia uma chave
+   * "Alarme ligado" no painel, redundante com a intensidade: desligar o
+   * alarme e exatamente o que "🔕 Silencioso" ja faz (nada de som nem de
+   * aviso na tela — so o contador). Duas chaves para dizer a mesma coisa
+   * confundem mais do que ajudam, e foi exatamente o que o medico
+   * reportou: o sino em si parecia "quebrado" ate ele achar a chave
+   * escondida no painel. Ver README ("As tres intensidades"). */
   var PADRAO = {
-    ativo: true,
     som: "sirene-classica",       // usado no modo completo (repete)
     somCurto: "toque-duplo",      // usado no modo discreto (toca uma vez)
     volume: 70,
@@ -152,12 +158,16 @@
      * numa atualizacao nao pode deixar o alarme mudo. */
     var somOk = SONS[guardado.som] && !SONS[guardado.som].curto;
     var curtoOk = SONS[guardado.somCurto] && SONS[guardado.somCurto].curto;
+    var intensidadeGuardada = INTENSIDADES[guardado.intensidade] ? guardado.intensidade : PADRAO.intensidade;
+    /* Migracao da chave "ativo" (existiu ate a v1.1.1): quem tinha o
+     * alarme desligado por ali continua desligado, so que agora atraves
+     * da intensidade — sem perder a preferencia na troca de versao. */
+    if (guardado.ativo === false) intensidadeGuardada = "silencioso";
     config = {
-      ativo: guardado.ativo !== false,
       som: somOk ? guardado.som : PADRAO.som,
       somCurto: curtoOk ? guardado.somCurto : PADRAO.somCurto,
       volume: Math.min(100, Math.max(0, parseInt(guardado.volume, 10) || PADRAO.volume)),
-      intensidade: INTENSIDADES[guardado.intensidade] ? guardado.intensidade : PADRAO.intensidade,
+      intensidade: intensidadeGuardada,
       janela: guardado.janela === true,
     };
   }
@@ -203,7 +213,6 @@
   }
 
   function sinalizarChegada(origem) {
-    if (!config.ativo) return;
     var agora = Date.now();
     if (agora - ultimoDisparo < DEBOUNCE_MS) return; // toast + rede = um alarme
     ultimoDisparo = agora;
@@ -278,7 +287,7 @@
     if (!haviaFila) return;
     timeoutReengate = setTimeout(function () {
       timeoutReengate = null;
-      if (config.ativo && quantosAguardando() > 0) dispararAlarme();
+      if (quantosAguardando() > 0) dispararAlarme();
     }, REENGATE_MS);
   }
 
@@ -410,6 +419,15 @@
     "}",
     "#mb-botao.ligado { background: linear-gradient(135deg,#0ea5a4,#0f766e); }",
     "#mb-botao.desligado { background: #64748b; }",
+    /* Caminho visivel para os ajustes — sem ela, so clique direito ou
+       shift+clique abrem o painel, e ninguem descobre isso sozinho. */
+    "#mb-config {",
+    "  position: fixed; right: 82px; bottom: 20px; z-index: 2147483000;",
+    "  width: 40px; height: 40px; border-radius: 50%; border: none; cursor: pointer;",
+    "  font-size: 17px; line-height: 1; color: #fff; font-family: system-ui, sans-serif;",
+    "  background: rgba(15,23,42,.55); box-shadow: 0 4px 14px rgba(0,0,0,.22);",
+    "}",
+    "#mb-config:hover { background: rgba(15,23,42,.78); }",
     "#mb-banner {",
     "  position: fixed; top: 0; left: 0; right: 0; z-index: 2147483001;",
     "  display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap;",
@@ -475,9 +493,13 @@
       '  <button type="button" id="mb-silenciar">Silenciar alarme</button>' +
       "</div>" +
       '<button type="button" id="mb-botao" title="Alarme de fila"></button>' +
+      /* Sino sozinho so cicla intensidade (clique) ou abre os ajustes por
+       * um gesto escondido (botao direito / shift+clique) — sem um jeito
+       * visivel, quem nao conhece o gesto acha que "clicar nao funciona".
+       * A engrenagem e so isso: um caminho obvio para a mesma tela. */
+      '<button type="button" id="mb-config" title="Configurar Alarme de fila">⚙️</button>' +
       '<div id="mb-painel" hidden>' +
       "  <h2>Alarme de fila</h2>" +
-      '  <label class="mb-linha" for="mb-ativo"><input type="checkbox" id="mb-ativo" /> Alarme ligado</label>' +
       '  <label for="mb-intensidade">Quanto ele deve incomodar</label>' +
       '  <select id="mb-intensidade">' +
       '    <option value="completo">🔔 Completo</option>' +
@@ -500,12 +522,14 @@
     elBanner = shadow.getElementById("mb-banner");
     elBotao = shadow.getElementById("mb-botao");
     elPainel = shadow.getElementById("mb-painel");
+    var elConfig = shadow.getElementById("mb-config");
 
     var sel = shadow.getElementById("mb-som");
 
     /* Como o botao de som do Waze: um toque cicla entre as intensidades,
-     * em vez de so ligar e desligar. Desligar de vez continua existindo —
-     * e a chave no painel. Aqui a escolha e "quanto", nao "se". */
+     * em vez de so ligar e desligar. A engrenagem ao lado (elConfig,
+     * abaixo) e o jeito visivel de chegar aos ajustes — direito/shift no
+     * sino continuam funcionando, para quem ja usa assim. */
     elBotao.addEventListener("click", function (ev) {
       if (ev.shiftKey) return abrirPainel();
       /* Aproveita o gesto para destravar o audio: o navegador so deixa
@@ -521,6 +545,10 @@
       ev.preventDefault();
       abrirPainel();
     });
+    elConfig.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      abrirPainel();
+    });
     shadow.getElementById("mb-silenciar").addEventListener("click", silenciarComReengate);
     sel.addEventListener("change", function () {
       if (intensidadeAtual().som === "curto") config.somCurto = sel.value;
@@ -531,13 +559,6 @@
        * que e a unica pergunta que existe ao mexer nessa lista. */
       contexto();
       tocarUmaVez(SONS[sel.value]);
-    });
-
-    shadow.getElementById("mb-ativo").addEventListener("change", function (ev) {
-      config.ativo = ev.target.checked;
-      gravar();
-      if (!config.ativo) silenciarAlarme();
-      refletir();
     });
 
     shadow.getElementById("mb-intensidade").addEventListener("change", function (ev) {
@@ -606,17 +627,11 @@
   function refletir() {
     if (!elBotao) return;
     var modo = intensidadeAtual();
-    /* Desligado vence a intensidade no que o botao mostra: com a funcao
-     * fora do ar, exibir "Completo" seria mentir sobre o que vai
-     * acontecer quando chegar paciente. */
-    elBotao.textContent = config.ativo ? modo.icone : "⛔";
-    elBotao.className = config.ativo
-      ? config.intensidade === "silencioso" ? "desligado" : "ligado"
-      : "desligado";
-    elBotao.title = config.ativo
-      ? "Alarme: " + modo.rotulo + " — " + modo.resumo +
-        " Clique para trocar, clique direito para configurar."
-      : "Alarme DESLIGADO — clique direito para configurar";
+    elBotao.textContent = modo.icone;
+    elBotao.className = config.intensidade === "silencioso" ? "desligado" : "ligado";
+    elBotao.title =
+      "Alarme: " + modo.rotulo + " — " + modo.resumo +
+      " Clique para trocar de intensidade, ⚙️ ao lado para configurar.";
 
     if (shadow) {
       var curto = modo.som === "curto";
@@ -636,8 +651,6 @@
       if (testar) testar.disabled = mudo;
       if (rotuloSom) rotuloSom.style.opacity = mudo ? ".45" : "";
       shadow.getElementById("mb-volume").value = config.volume;
-      var chaveAtivo = shadow.getElementById("mb-ativo");
-      if (chaveAtivo) chaveAtivo.checked = config.ativo;
       var dica = shadow.getElementById("mb-intensidade-dica");
       if (dica) dica.textContent = modo.resumo;
       var selInt = shadow.getElementById("mb-intensidade");
@@ -741,7 +754,10 @@
       if (Atencao) {
         Atencao.manterTelaAcesa(true);
         pararSuspensao = Atencao.aoAcordarDeSuspensao(function (atrasoMs) {
-          if (!config.ativo) return;
+          // silencioso = alarme mudo de proposito: avisar que ele "nao
+          // tocou" enquanto suspenso seria alarme falso sobre um alarme
+          // que o medico ja escolheu nao ouvir
+          if (config.intensidade === "silencioso") return;
           var min = Math.round(atrasoMs / 60000);
           if (min < 2) return;
           console.warn("[Meeds B] aba suspensa por ~" + min + " min; o alarme nao pode tocar.");
@@ -774,7 +790,7 @@
     _sinalizarChegada: function (o) { sinalizarChegada(o); },
     _aoResponderFila: function (j) { aoResponderFila(j); },
     _estado: function () {
-      return { tocando: tocando, aguardando: quantosAguardando(), ativo: config && config.ativo };
+      return { tocando: tocando, aguardando: quantosAguardando(), intensidade: config && config.intensidade };
     },
   };
 })(typeof unsafeWindow !== "undefined" ? unsafeWindow : typeof window !== "undefined" ? window : globalThis);

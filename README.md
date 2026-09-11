@@ -44,6 +44,11 @@ ficar sabendo que chegou gente.
 O aviso do sistema, o título e o favicone valem nos três: eles são sobre **onde**
 avisar, não sobre o quanto incomodar.
 
+Não existe mais uma chave separada de "alarme ligado": desligar de vez é
+exatamente o que 🔕 Silencioso já faz. Para abrir os ajustes (som, volume,
+janela de aviso), clique na ⚙️ ao lado do sino — clique direito ou
+shift+clique no próprio sino também funcionam, para quem prefere.
+
 A lista de sons muda junto com a intensidade. As sirenes foram feitas para
 repetir e soam truncadas se tocadas uma vez só, então o modo discreto só oferece
 os sons curtos — os que têm começo, meio e fim em menos de um segundo.
@@ -121,8 +126,8 @@ alarme que funciona de um que só parece funcionar.
 - **Nenhum dado de paciente é lido, gravado ou exibido.** O aviso fala em
   quantidade e tempo — nunca em gente.
 - Os ids de atendimento vivem em memória e morrem com a aba.
-- Em disco vão só as preferências do médico: ligado, intensidade, som,
-  volume e se a janela de aviso está ligada.
+- Em disco vão só as preferências do médico: intensidade, som, volume e se
+  a janela de aviso está ligada.
 - O script **não faz requisição própria**. Ele lê respostas que a própria tela
   já buscou, e `/queues/mine` é, por definição, a fila do médico logado.
 - Uma notificação do sistema aparece na tela de bloqueio e no histórico de
