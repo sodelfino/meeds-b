@@ -5,7 +5,9 @@ Avisa o médico quando entra paciente no Pronto Atendimento do **Meeds Doctor**
 minimizado, que é justamente quando o aviso da própria tela não é visto por
 ninguém.
 
-Instalação em [docs/INSTALACAO.md](docs/INSTALACAO.md).
+Instalação em [docs/INSTALACAO.md](docs/INSTALACAO.md) — computador/Android
+com Tampermonkey, ou iPad/iPhone/Mac com Safari (app Userscripts). As duas
+versões têm o mesmo código, byte a byte; só o cabeçalho muda.
 
 ---
 
@@ -137,8 +139,8 @@ alarme que funciona de um que só parece funcionar.
 ## Desenvolvimento
 
 ```bash
-npm run verificar   # cabeçalho, dado sensível, e as duas suítes de teste
-npm run build       # gera dist/meeds-b.user.js e o .meta.js
+npm run verificar   # os dois cabeçalhos, dado sensível, e as três suítes de teste
+npm run build       # gera os 4 arquivos em dist/ (Tampermonkey + Safari)
 ```
 
 Para testar sem tocar em produção, sirva a pasta e abra `tests/smoke.html` — ela

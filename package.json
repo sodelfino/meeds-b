@@ -1,6 +1,6 @@
 {
   "name": "meeds-b",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "Alarme de fila para o Meeds Doctor (doctor.calltechsaude.com.br). Avisa o medico quando entra paciente no Pronto Atendimento, inclusive com a aba de fundo ou o navegador minimizado.",
   "scripts": {
