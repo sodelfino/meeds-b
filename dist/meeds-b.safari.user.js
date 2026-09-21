@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Meeds B — Alarme de fila para iPad - por Marcelo
 // @namespace    novetech-meeds-b-safari
-// @version      1.3.0
+// @version      1.4.0
 // @description  Avisa quando entra paciente na fila do Pronto Atendimento do Meeds Doctor, mesmo com a aba de fundo ou o navegador minimizado. Nenhum dado de paciente e lido ou gravado.
 // @author       Marcelo
 // @match        https://doctor.calltechsaude.com.br/*
@@ -1134,8 +1134,14 @@
 
   var idsVistos = null;           // null = ainda nao ha base
   var ultimoContador = null;
+  var ultimoContadorEm = 0;       // quando ultimoContador foi lido pela ULTIMA vez
   var ultimoDisparo = 0;
   var chegadaEm = null;           // quando o alarme comecou a tocar
+
+  /* 3x o intervalo de polling do DOM — mesmo raciocinio do Assistente
+   * Meeds (LIMITE_FRESCOR_DOM_MS): da folga para um ciclo perdido sem
+   * abrir mao de exigir leitura RECENTE. Ver evidenciaFrescaDoContador(). */
+  var LIMITE_FRESCOR_CONTADOR_MS = INTERVALO_DOM_MS * 3;
 
   /* ---------------- preferencias ---------------- */
 
@@ -1205,6 +1211,38 @@
 
   function quantosAguardando() {
     return ultimoContador === null ? 0 : ultimoContador;
+  }
+
+  /* ------------------------------------------------------------------
+   * VALOR CONGELADO NAO E O MESMO QUE VALOR ATUAL — SO IMPORTA PARA QUEM
+   * RE-TOCA SOZINHO
+   * ------------------------------------------------------------------
+   * `ultimoContador` nunca expira: ele so e sobrescrito quando ha uma
+   * leitura fresca do DOM (lerContadorEReagir, a cada 4s, SE o contador
+   * "Aguardando" estiver na tela). Fora da tela do Pronto Atendimento —
+   * o medico atendendo o paciente que acabou de chegar, por exemplo —
+   * ele simplesmente para de ser atualizado e fica parado no ultimo
+   * numero visto, por quanto tempo for.
+   *
+   * Isso nao e problema nenhum para o uso comum de quantosAguardando()
+   * (contador da aba, decidir se silencia um alarme TOCANDO agora): um
+   * numero congelado ainda e a melhor informacao disponivel no momento.
+   *
+   * O problema e silenciarComReengate() usar esse MESMO numero, 5
+   * MINUTOS DEPOIS, para decidir se volta a tocar a sirene inteira. Se o
+   * medico saiu da tela assim que silenciou, o numero congelado nunca
+   * mais mudou — e o reengate toca de novo achando que ainda ha gente,
+   * mesmo que o paciente ja tenha sido atendido por outra via havera
+   * muito tempo. E a mesma classe de defeito do Assistente Meeds (D64,
+   * "abstencao nao e prova de ainda cheia"): la o sinal expirava em 12s
+   * porque um decisor com prazo de validade; aqui nao ha decisor nenhum
+   * — o numero so fica parado, o que e pior, porque nunca vira "nao
+   * sei" sozinho.
+   *
+   * Por isso o REENGATE (nao o uso comum de quantosAguardando) passa a
+   * exigir leitura FRESCA antes de soar de novo. */
+  function evidenciaFrescaDoContador() {
+    return ultimoContadorEm > 0 && Date.now() - ultimoContadorEm <= LIMITE_FRESCOR_CONTADOR_MS;
   }
 
   function textoDoMotivo() {
@@ -1291,10 +1329,24 @@
     var haviaFila = quantosAguardando() > 0;
     silenciarAlarme();
     if (!haviaFila) return;
-    timeoutReengate = setTimeout(function () {
-      timeoutReengate = null;
-      if (quantosAguardando() > 0) dispararAlarme();
-    }, REENGATE_MS);
+    timeoutReengate = setTimeout(tentarReengatarAlarme, REENGATE_MS);
+  }
+
+  /* Sem leitura fresca do contador (medico fora da tela da fila havera
+   * mais de LIMITE_FRESCOR_CONTADOR_MS): nao toca as cegas em cima de um
+   * numero que pode ter ficado parado ha minutos. Tambem nao desiste —
+   * tenta de novo mais tarde, na MESMA cadencia, ate uma leitura fresca
+   * aparecer (o medico volta a tela, ou so o proximo poll de 4s pega o
+   * contador visivel de novo). A corrente so morre quando ha PROVA fresca
+   * de fila vazia; ate la, ela so para de SOAR sem prova. */
+  function tentarReengatarAlarme() {
+    timeoutReengate = null;
+    if (!evidenciaFrescaDoContador()) {
+      console.debug("[Meeds B] sem leitura fresca da fila apos silenciar — reagendando em silencio, sem tocar");
+      timeoutReengate = setTimeout(tentarReengatarAlarme, REENGATE_MS);
+      return;
+    }
+    if (quantosAguardando() > 0) dispararAlarme();
   }
 
   function marcarAtencao(podeNotificar) {
@@ -1333,6 +1385,7 @@
   function lerContadorEReagir() {
     var n = Fila.lerContadorAguardando();
     if (n === null) return; // fora do Pronto Atendimento: nada a dizer
+    ultimoContadorEm = Date.now();
     var anterior = ultimoContador;
     ultimoContador = n;
 
@@ -1798,6 +1851,15 @@
     _estado: function () {
       return { tocando: tocando, aguardando: quantosAguardando(), intensidade: config && config.intensidade };
     },
+    /* Exposto para o teste de reengate (o mesmo defeito da D64 do
+     * Assistente Meeds, ver evidenciaFrescaDoContador). Entra direto
+     * pelo estado interno, sem depender do polling de 4s do DOM. */
+    _definirContador: function (n) { ultimoContador = n; ultimoContadorEm = Date.now(); },
+    _envelhecerContador: function (ms) { ultimoContadorEm -= ms; },
+    _dispararAlarme: function () { dispararAlarme(); },
+    _silenciarComReengate: function () { silenciarComReengate(); },
+    _configurar: function (c) { config = Object.assign(config || {}, c); },
+    _carregarConfig: function () { carregarConfig(); },
   };
 })(typeof unsafeWindow !== "undefined" ? unsafeWindow : typeof window !== "undefined" ? window : globalThis);
 

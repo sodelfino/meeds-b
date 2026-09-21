@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Meeds B — Alarme de fila para iPad - por Marcelo
 // @namespace    novetech-meeds-b-safari
-// @version      1.3.0
+// @version      1.4.0
 // @description  Avisa quando entra paciente na fila do Pronto Atendimento do Meeds Doctor, mesmo com a aba de fundo ou o navegador minimizado. Nenhum dado de paciente e lido ou gravado.
 // @author       Marcelo
 // @match        https://doctor.calltechsaude.com.br/*
