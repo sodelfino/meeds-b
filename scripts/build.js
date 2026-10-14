@@ -27,7 +27,7 @@ const CABECALHO = `// ==UserScript==
 // @name         Meeds B — Alarme de fila
 // @namespace    novetech-meeds-b
 // @version      ${pacote.version}
-// @description  Avisa quando entra paciente na fila do Pronto Atendimento do Meeds Doctor, mesmo com a aba de fundo ou o navegador minimizado. Nenhum dado de paciente e lido ou gravado.
+// @description  Avisa quando entra paciente na fila do Pronto Atendimento do Meeds Doctor, mesmo com a aba de fundo ou o navegador minimizado. So o nome do paciente nunca e lido nem gravado.
 // @author       Marcelo
 // @match        https://doctor.calltechsaude.com.br/*
 // @grant        GM_setValue

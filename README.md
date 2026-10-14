@@ -40,7 +40,7 @@ ficar sabendo que chegou gente.
 | | O que acontece quando chega paciente |
 |---|---|
 | 🔔 **Completo** | Sirene repetindo, faixa no topo e moldura na tela até você silenciar |
-| 🔉 **Discreto** | Um som curto, uma vez. Nada na tela |
+| 🔉 **Discreto** | Um cartão no canto com a cidade de quem chegou, e um som curto que toca **duas vezes**. Some sozinho, e **volta a cada 2 min** se o paciente continuar esperando |
 | 🔕 **Silencioso** | Só o contador na aba e no favicone |
 
 O aviso do sistema, o título e o favicone valem nos três: eles são sobre **onde**
@@ -91,42 +91,137 @@ só gritar.
 
 ## Como ele sabe que chegou paciente
 
-Três sinais independentes, porque um sozinho é frágil:
+Quatro sinais independentes, porque um sozinho é frágil:
 
 | sinal | o que é | para quê |
 |---|---|---|
 | **A. Toast do app** | o "Novo paciente na fila" que o próprio Meeds Doctor emite | dispara |
-| **B. Cartão "Aguardando"** | o número no topo do Pronto Atendimento | conta, e diz quando parar |
-| **C. `/api/doctor/queues/mine`** | a resposta que a própria tela já busca | dispara (id novo) |
+| **B. Cartão "Aguardando"** | o número no topo do Pronto Atendimento — **só existe nessa tela** | conta, e diz quando parar |
+| **C. `/api/doctor/queues/mine`** | a resposta que a própria tela já busca — **só quando o médico navega** | dispara (entrada nova na fila), conta, e diz quando a fila esvaziou |
+| **D. Clique em "Atender"** | o botão da linha de um paciente, na tela da fila | tira esse paciente da conta na hora |
+
+### O que a gravação de 14/10 ensinou
+
+O app **empurra a chegada** para a tela sem fazer requisição nenhuma: o contador
+e o toast aparecem sozinhos. A fila só é buscada (`/queues/mine`) quando o médico
+clica no menu. E o cartão "Aguardando" não existe fora do Pronto Atendimento.
+
+Consequência: **o alarme sabe pouco, e o pouco que sabe envelhece.** Ele foi
+desenhado em volta disso:
+
+- **Uma chegada nunca vale zero.** Se ninguém sabe quantos são (o médico está na
+  Agenda), a chegada ainda é uma chegada — vale *pelo menos mais um* do que os
+  já avisados. Contar um a menos deixa um paciente sem aviso nenhum: nem título,
+  nem favicone, nem notificação do sistema, nem o lembrete agendado.
+- **A rede é a única fonte que enxerga a fila vazia** com o cartão fora da tela.
+  Uma resposta com a fila zerada cala o alarme, cancela os lembretes e limpa a aba.
+- **Lembrete só toca com leitura fresca** (a regra D64, a mesma do Assistente
+  Meeds: *abstenção não é prova de "ainda cheia"*). O contador "Aguardando" só
+  existe na tela do Pronto Atendimento; fora dela o último número fica parado.
+  Por isso o reengate de 5 min, o repique de 2 min do Discreto e o lembrete de
+  quem já esperava **só soam se o contador foi lido há no máximo 12 s**. Sem
+  leitura fresca eles reagendam em silêncio, no mesmo ritmo — **não desistem** —
+  e decidem quando o médico volta à tela da fila. A corrente só morre com prova
+  fresca de fila vazia.
+- **"Atender" clicado na fila** encerra o aviso desse paciente antes de a tela
+  mudar. Só vale com o cartão na tela: na Agenda o mesmo botão atende uma consulta
+  *marcada*, e contar esse clique tiraria da memória um paciente que ainda espera.
+  Se o rótulo do botão mudar, esse sinal simplesmente para de agir.
+- **Quem já esperava ao ligar** (aba recarregada, script atualizado) não dispara
+  sirene — mas ganha lembrete. Sem isso, esperaria para sempre se ninguém novo
+  chegasse.
 
 A primeira leitura de cada fonte **nunca** dispara: ela só estabelece a base.
 Sem isso, ligar o alarme com gente já esperando faria a sirene tocar para
 pacientes que o médico já conhecia.
 
-O toast e a rede podem apontar a mesma chegada; uma janela de 2,5 s garante que
-isso vire **um** alarme, não dois.
+### Um paciente, um alarme
+
+O toast, o contador (lido de 4 em 4 s) e a rede veem a **mesma** chegada em
+momentos diferentes. Para isso não virar dois alarmes, o alarme mantém *quantos
+já avisou*, e só dispara quando há **mais gente do que isso**:
+
+- dentro de 10 s do último alarme, um sinal que não traz ninguém além dos já
+  avisados é a mesma chegada;
+- a rede desconta as chegadas que o toast e o contador já anunciaram — sem esse
+  desconto, abrir o Pronto Atendimento (que busca a fila e traz o paciente que
+  acabou de ser anunciado) fazia a sirene tocar de novo **justamente quando o
+  médico chegava para atender**;
+- um `0` do contador logo depois de um toast é atraso de renderização, não "a fila
+  esvaziou" — mas um `0` da **rede** vale na hora.
+
+Um limite assumido: se um paciente sai e outro entra em menos de 10 s, o segundo
+pode tocar com até ~14 s de atraso. Entre tocar tarde e nunca tocar, o primeiro é
+o erro barato.
 
 ### Uma decisão que vale explicar
 
 No [Assistente Meeds](https://github.com/sodelfino/meeds-suite) a rede é o sinal
-principal, porque o formato daquela API era conhecido. Aqui é o contrário: o
-**corpo** de `/queues/mine` nunca foi observado — as gravações guardam corpo
-apenas de requisição com erro, e essa sempre respondeu 200. O DOM, esse foi
-observado inteiro.
+principal, porque o formato daquela API era conhecido. Aqui o DOM veio
+primeiro, e por bom tempo: o **corpo** de `/queues/mine` só foi observado numa
+gravação em 17/09 (a fila estava vazia naquele momento) — antes disso as
+gravações guardavam corpo só de requisição com erro, e essa sempre respondeu
+200.
 
-Então o DOM vem primeiro, e a leitura da rede é **deliberadamente genérica**:
-colhe os ids das folhas do JSON, sem presumir nome de campo nenhum. Ela detecta
-*chegada*, nunca fornece a *contagem* — uma fila vazia ainda é um objeto com
-`id`, e contar por ali mostraria "1 aguardando" com a fila zerada, fazendo o
-alarme nunca parar.
+O formato real é um **array de filas**, cada uma assim:
+
+```json
+{ "queue": { "id": "...", "careLine": "medica", "label": "Pronto atendimento" },
+  "status": "ok", "items": [ /* pacientes daquela fila */ ], "stats": { "waiting": 0 } }
+```
+
+A leitura reconhece esse formato especificamente: só os ids de **dentro de
+`items`** contam como paciente. Sem esse caso especial, o próprio `queue.id`
+(que não tem nada aninhado com `id`) virava uma "folha" e era contado como se
+fosse gente esperando — sempre presente, então nunca dispara um alarme
+sozinho (o id da fila é estável entre polls), mas uma reconfiguração de fila
+(nova especialidade, novo `careLineId`) pareceria "chegou paciente" com a
+fila comprovadamente vazia.
+
+Cada item é **uma entrada na fila**, e quem a identifica é o `consultationId`. O
+`patient.id` é a *pessoa*: a mesma pessoa que sai e volta, ou é re-enfileirada,
+é uma chegada nova com o mesmo `patient.id` — e seria silenciada se a chave
+fosse esse.
+
+Fora do formato reconhecido, a leitura de ids continua **deliberadamente
+genérica**: colhe os ids das folhas do JSON, sem presumir nome de campo nenhum,
+para qualquer formato ainda não visto. Já a **contagem** é o oposto, e estrita:
+só sai número para o formato observado (`stats.waiting` de cada fila, que na
+gravação bateu com `items.length` e com o cartão "Aguardando"). Qualquer outra
+forma devolve *"não sei"* — que nunca é "zero". Contar por palpite num formato
+nunca visto é exatamente o que mostraria "1 aguardando" com a fila zerada e
+faria o alarme nunca parar.
 
 Desenhar em cima do que se observou, e não do que se imagina, é o que separa um
 alarme que funciona de um que só parece funcionar.
 
 ## Privacidade
 
-- **Nenhum dado de paciente é lido, gravado ou exibido.** O aviso fala em
-  quantidade e tempo — nunca em gente.
+- **O nome do paciente nunca é guardado, registrado, exibido nem enviado**, em
+  nenhuma intensidade. O aviso fala em quantidade e tempo. Dizer "nunca é lido"
+  seria prometer demais, e a revisão de 14/10 apontou isso: para achar o
+  rótulo "Aguardando" ou "Novo", o script passa pelo texto das folhas vizinhas,
+  e o toast chega com o nome dentro do próprio nó. Esse texto é só comparado com
+  rótulos conhecidos, em memória, na hora — e nós com mais de 300 caracteres
+  nem são examinados. A suíte (`tests/alarme-sinais.test.js`) procura o nome em
+  tudo que o médico, ou uma tela compartilhada, pode ver, e em tudo que vai a
+  disco.
+- **Uma exceção deliberada:** o modo 🔉 Discreto mostra a **cidade** de quem
+  acabou de chegar (o selo do cartão de fila, ex. "macae") — a mesma
+  informação e pela mesma razão que o [Assistente
+  Meeds](https://github.com/sodelfino/meeds-suite) já mostra lá: sustenta
+  uma decisão real do médico (qual REMUME/laudo valem para aquele
+  atendimento), e não é dado que identifique a pessoa. A leitura (ver
+  `lerOrigemDoUltimoPaciente` em `src/fila.js`) **falha fechada**: só casa um
+  selo minúsculo de uma palavra só, e devolve *nada* se houver mais de um
+  candidato na mesma linha (um nome ou um chip de prioridade ao lado do selo) ou
+  se duas linhas "Novo" tiverem cidades diferentes. O padrão, sozinho, não
+  rejeita um nome digitado em minúsculas — por isso a regra é a ambiguidade, não
+  a forma. **Risco que sobra:** uma linha com um único candidato minúsculo que
+  seja um nome e nenhum selo ainda seria lida como cidade. Fechar isso exige uma
+  lista fechada de cidades ou o `tenantId` do payload (que só chega na
+  navegação) — é decisão de produto. A cidade lida vive só em memória
+  (`ultimaOrigem`), nunca em disco, e morre com a aba.
 - Os ids de atendimento vivem em memória e morrem com a aba.
 - Em disco vão só as preferências do médico: intensidade, som, volume e se
   a janela de aviso está ligada.
@@ -139,7 +234,7 @@ alarme que funciona de um que só parece funcionar.
 ## Desenvolvimento
 
 ```bash
-npm run verificar   # os dois cabeçalhos, dado sensível, e as três suítes de teste
+npm run verificar   # os dois cabeçalhos, dado sensível, e as cinco suítes de teste
 npm run build       # gera os 4 arquivos em dist/ (Tampermonkey + Safari)
 ```
 
@@ -160,7 +255,27 @@ src/som.js       os onze sons, sintetizados — sem arquivo externo
 src/fila.js      como saber que chegou paciente NESTE site
 src/alarme.js    a lógica e a interface
 scripts/build.js junta tudo num userscript só
+tests/           atencao, fila e som: um módulo cada
+                 alarme.test.js e alarme-sinais.test.js: o alarme INTEIRO,
+                 rodando os quatro fontes de verdade com relógio e tela falsos
+tests/helpers/   ambiente-alarme.js, o "navegador" dessas duas suítes
 ```
+
+### Por que existem `alarme.test.js` e `alarme-sinais.test.js`
+
+Até a v1.4.0 o arquivo que decide *se o médico é avisado* — `src/alarme.js` —
+não tinha teste nenhum. Os três que existiam cobriam a leitura da fila, o som e
+a escada de atenção, mas não o que junta tudo, e é aí que moram os defeitos do
+tipo "paciente preso": um timer cancelado por uma função com "parar" no nome,
+um contador que ninguém zera, um sinal que chega duas vezes. Nenhum teste de
+unidade de um módulo isolado enxerga isso.
+
+Os cenários descrevem o comportamento **correto** segundo este README, e a suíte
+foi validada por mutação: reintroduzir cada defeito conhecido, um por vez, tem
+que fazê-la falhar. Se você "consertar" o alarme e um teste quebrar, leia o
+comentário do cenário antes de mexer no teste — vários existem para impedir uma
+correção óbvia e errada (por exemplo, absorver uma leitura "repetida" parece
+resolver a duplicidade e engole o segundo paciente para sempre).
 
 `src/atencao.js` e `src/som.js` vieram do
 [Assistente Meeds](https://github.com/sodelfino/meeds-suite) e são a única coisa

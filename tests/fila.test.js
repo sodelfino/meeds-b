@@ -1,16 +1,18 @@
 /* ------------------------------------------------------------------
  * tests/fila.test.js — src/fila.js
  * ------------------------------------------------------------------
- * O corpo de /api/doctor/queues/mine NUNCA foi observado: as gravacoes
- * guardam corpo so de requisicao com erro, e essa sempre respondeu 200.
- * Todo o desenho da leitura de rede parte disso — ela e generica de
- * proposito, e estes testes existem para provar que ela acerta nos
- * formatos plausiveis e, principalmente, que ela NAO inventa fila onde
- * nao ha. Um alarme que toca sem paciente e desligado na primeira
- * semana; um que nao toca com paciente e pior ainda.
+ * O corpo de /api/doctor/queues/mine foi observado em 17/09 (fila vazia)
+ * e em 14/10 (com um paciente): um array de filas, cada uma com "queue",
+ * "items" e "stats". Mesmo assim a leitura de ids continua generica de
+ * proposito — o formato conhecido e um CASO ESPECIAL dentro dela, nao um
+ * substituto — e estes testes provam as duas coisas: que ela acerta no
+ * formato real e nos plausiveis e, principalmente, que ela NAO inventa
+ * fila onde nao ha. Um alarme que toca sem paciente e desligado na
+ * primeira semana; um que nao toca com paciente e pior ainda.
  *
- * Se um dia o formato real aparecer, acrescente-o aqui como mais um
- * caso — nao troque a leitura generica por ele.
+ * A CONTAGEM (contagemDaFila) e o oposto: estrita. So devolve numero para
+ * o formato observado; qualquer outro devolve null, que significa "nao
+ * sei" e nunca "zero".
  * ------------------------------------------------------------------ */
 const fs = require("fs");
 const vm = require("vm");
@@ -136,6 +138,35 @@ function montarDocumento(raiz) {
   ok("nao desce infinitamente", n(aninhar(30)) >= 0);
 }
 
+/* 4b. o FORMATO REAL, observado em 17/09 (gravacao com a fila vazia):
+ * array de filas, cada uma com "queue" (descritor, com id PROPRIO) e
+ * "items" (os pacientes de verdade). O id da fila nao pode contar como
+ * paciente. */
+{
+  const F = ambiente().MeedsBFila;
+  const n = (x) => F.idsDeFolhas(x).length;
+
+  const corpoRealVazio = [
+    { queue: { id: "e9abae67-...", careLine: "medica", label: "Pronto atendimento" },
+      status: "ok", items: [], stats: { waiting: 0 } },
+    { queue: { id: "b1f46bc2-...", careLine: "saude-mental", label: "Psicologia" },
+      status: "ok", items: [], stats: { waiting: 0 } },
+  ];
+  ok("fila vazia (formato real) nao conta os ids DAS FILAS como paciente",
+     n(corpoRealVazio) === 0, String(n(corpoRealVazio)));
+
+  const corpoRealComPaciente = [
+    { queue: { id: "e9abae67-...", careLine: "medica", label: "Pronto atendimento" },
+      status: "ok", items: [{ id: "p1", nome: "nao deveria importar" }], stats: { waiting: 1 } },
+    { queue: { id: "b1f46bc2-...", careLine: "saude-mental", label: "Psicologia" },
+      status: "ok", items: [], stats: { waiting: 0 } },
+  ];
+  ok("um paciente em 'items' (formato real) conta 1, nao 3 (as 2 filas + o paciente)",
+     n(corpoRealComPaciente) === 1, String(n(corpoRealComPaciente)));
+  ok("o id contado e o do PACIENTE, nao o da fila",
+     JSON.stringify(F.idsDeFolhas(corpoRealComPaciente)) === '["p1"]');
+}
+
 function aninhar(n) {
   let atual = { id: "fundo" };
   for (let i = 0; i < n; i++) atual = { dentro: atual };
@@ -151,6 +182,102 @@ function aninhar(n) {
   const a = F.idsDeFolhas(corpo).sort().join(",");
   const b = F.idsDeFolhas(corpo).sort().join(",");
   ok("a leitura e estavel entre chamadas", a === b && a === "p1,p2", a);
+}
+
+/* 6. lerOrigemDoUltimoPaciente — a cidade do cartao Discreto, NUNCA o nome */
+{
+  // linha da fila como vista na gravacao: avatar, nome, selo de cidade
+  // minusculo, o marcador "Novo" e o botao "Atender".
+  const linha = el("div", "", [
+    el("div", "", []), // avatar (iniciais), sem texto solto
+    el("div", "", [
+      el("div", "Marcelo Delfino dos Santos"), // nome — nunca deve ser lido
+      el("div", "", [el("span", "macae")]),    // selo de cidade
+    ]),
+    el("div", "", [el("span", "Novo"), el("button", "Atender")]),
+  ]);
+  const F = ambiente(linha).MeedsBFila;
+  ok("acha a cidade do paciente marcado 'Novo'", F.lerOrigemDoUltimoPaciente() === "macae",
+     String(F.lerOrigemDoUltimoPaciente()));
+}
+
+{
+  // sem o marcador "Novo" (paciente ja conhecido, nao e chegada): nao ha
+  // o que ancorar, e a funcao NAO deve varrer a tela inteira atras de
+  // qualquer selo minusculo por ai.
+  const tela = el("div", "", [
+    el("div", "", [el("div", "Alguem Aqui"), el("span", "macae")]),
+  ]);
+  const F = ambiente(tela).MeedsBFila;
+  ok("sem o marcador 'Novo' devolve null", F.lerOrigemDoUltimoPaciente() === null);
+}
+
+{
+  // o nome NUNCA casa o padrao do selo: Title Case e mais de uma palavra.
+  // Isto prova a propriedade de seguranca, nao so o caminho feliz.
+  const F = ambiente().MeedsBFila;
+  const nome = "Marcelo Delfino dos Santos";
+  ok("nome de paciente nao casa o padrao do selo de cidade",
+     !/^\p{Ll}[\p{Ll}-]{1,29}$/u.test(nome));
+}
+
+{
+  // fora do Pronto Atendimento (sem document): null, nunca erro.
+  const F = ambiente().MeedsBFila;
+  ok("sem tela nao explode", F.lerOrigemDoUltimoPaciente() === null);
+}
+
+/* 7. identidade: a ENTRADA na fila (consultationId), nao a pessoa */
+{
+  const F = ambiente().MeedsBFila;
+  const fila = (items) => [{ queue: { id: "q1" }, status: "ok", items, stats: { waiting: items.length } }];
+  const real = { consultationId: "c1", priority: "normal", tenantId: "macae",
+                 patient: { id: "p1", name: "nunca lido", locality: {} } };
+
+  ok("item real: a chave e o consultationId, nao o patient.id",
+     JSON.stringify(F.idsDeFolhas(fila([real]))) === '["c1"]', JSON.stringify(F.idsDeFolhas(fila([real]))));
+  ok("a mesma pessoa em outra consulta e outra chave",
+     F.idsDeFolhas(fila([real]))[0] !== F.idsDeFolhas(fila([{ consultationId: "c2", patient: { id: "p1" } }]))[0]);
+  ok("sem consultationId, cai no id do proprio item",
+     JSON.stringify(F.idsDeFolhas(fila([{ id: "x9", patient: { id: "p1" } }]))) === '["x9"]');
+  ok("so com patient.id, usa ele",
+     JSON.stringify(F.idsDeFolhas(fila([{ patient: { id: "p7" } }]))) === '["p7"]');
+  ok("item sem nenhuma chave nao vira id vazio",
+     F.idsDeFolhas(fila([{ priority: "normal" }])).every((x) => x !== "" && x !== "undefined"));
+}
+
+/* 8. contagemDaFila — estrita: so o formato observado, e null = "nao sei" */
+{
+  const F = ambiente().MeedsBFila;
+  const q = (waiting, items) => ({ queue: { id: "q" }, status: "ok", items: items || [], stats: { waiting } });
+
+  ok("duas filas somam o stats.waiting", F.contagemDaFila([q(0), q(3, [{}, {}, {}])]) === 3);
+  ok("fila vazia no formato real e ZERO, nao null", F.contagemDaFila([q(0), q(0)]) === 0);
+  ok("sem stats.waiting, usa o tamanho de items",
+     F.contagemDaFila([{ queue: { id: "q" }, items: [{}, {}] }]) === 2);
+  ok("lista vazia nao e zero: e desconhecido", F.contagemDaFila([]) === null);
+  ok("objeto solto nao e formato conhecido", F.contagemDaFila({ data: [q(2)] }) === null);
+  ok("uma entrada fora do formato invalida a conta toda", F.contagemDaFila([q(2), { id: "x" }]) === null);
+  ok("sem 'items' em array nao conta", F.contagemDaFila([{ queue: { id: "q" }, items: "x" }]) === null);
+  ok("null e texto nao explodem", F.contagemDaFila(null) === null && F.contagemDaFila("fila") === null);
+  ok("stats negativo e ignorado", F.contagemDaFila([{ queue: { id: "q" }, items: [{}], stats: { waiting: -4 } }]) === 1);
+}
+
+/* 9. o toast: so um no PEQUENO que contem a frase */
+{
+  function disparos(texto) {
+    const ctx = ambiente(el("div", "", []));
+    let aoMutar = null;
+    ctx.MutationObserver = function (f) { aoMutar = f; this.observe = () => {}; this.disconnect = () => {}; };
+    ctx.document.documentElement = {};
+    let n = 0;
+    ctx.MeedsBFila.observarToast(() => { n++; });
+    aoMutar([{ addedNodes: [{ nodeType: 1, textContent: texto }] }]);
+    return n;
+  }
+  ok("o toast real dispara", disparos("Novo paciente na fila Fulano · Teste") === 1);
+  ok("um no enorme que so contem a frase nao dispara",
+     disparos("x ".repeat(500) + "novo paciente na fila") === 0);
 }
 
 console.log(falhas ? `\n${falhas} FALHA(S)` : "\ntodos passaram");

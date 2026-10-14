@@ -20,9 +20,12 @@
  * A escada existe porque alarme mais alto nao resolve: o que resolve e
  * chegar no canal onde o medico esta. Ver o README.
  *
- * PRIVACIDADE: nenhum dado de paciente e lido, gravado ou exibido. O
- * aviso fala em quantidade e tempo. Em disco vao so as preferencias do
- * medico (ligado, som, volume).
+ * PRIVACIDADE: o aviso fala em quantidade e tempo. A unica excecao e o
+ * modo Discreto, que mostra a CIDADE (nunca o nome) de quem acabou de
+ * chegar — ver a nota em src/fila.js, lerOrigemDoUltimoPaciente(). Em
+ * disco vao so as preferencias do medico (ligado, som, volume); a cidade
+ * lida para o cartao vive so na variavel `ultimaOrigem`, em memoria, e
+ * morre com a aba.
  * ------------------------------------------------------------------ */
 (function (raiz) {
   "use strict";
@@ -58,31 +61,33 @@
    * A escada de atencao (titulo, favicone, notificacao do sistema) vale
    * nos tres: ela e sobre ONDE avisar, nao sobre o quanto incomodar.
    *
-   * DIFERENCA EM RELACAO AO ASSISTENTE MEEDS
-   * La o modo discreto mostra um cartao com QUEM chegou e DE ONDE. Aqui
-   * nao: este script nao le dado de paciente em lugar nenhum (ver o
-   * cabecalho de src/fila.js), e trazer o cartao junto contrariaria a
-   * propria regra que ele declara. O discreto daqui e som curto e mais
-   * nada na tela.
+   * PARIDADE COM O ASSISTENTE MEEDS (sodelfino/meeds-suite)
+   * La o Discreto mostra um cartao no canto com a cidade de quem chegou, o
+   * som curto toca DUAS vezes (uma vez so passa despercebida num plantao
+   * barulhento) e volta a cada 2 min enquanto o paciente continuar
+   * esperando. Isto aqui e a mesma experiencia, com a mesma cautela: o
+   * cartao mostra so a CIDADE (o selo minusculo do paciente), nunca o
+   * nome — ver lerOrigemDoUltimoPaciente() em src/fila.js e a nota de
+   * Privacidade la em cima.
    * ------------------------------------------------------------------ */
   var INTENSIDADES = {
     silencioso: {
       rotulo: "Silencioso",
       icone: "🔕",
       resumo: "Só o contador na aba e no favicone. Nada de som nem de aviso na tela.",
-      som: false, banner: false,
+      som: false, banner: false, cartao: false,
     },
     discreto: {
       rotulo: "Discreto",
       icone: "🔉",
-      resumo: "Um som curto, uma vez. Sem faixa e sem moldura na tela.",
-      som: "curto", banner: false,
+      resumo: "Um cartão no canto com a cidade de quem chegou, e um som curto que toca duas vezes — e volta a cada 2 min se o paciente continuar esperando.",
+      som: "curto", banner: false, cartao: true,
     },
     completo: {
       rotulo: "Completo",
       icone: "🔔",
       resumo: "Sirene repetindo, faixa no topo e moldura na tela até você silenciar.",
-      som: "repetido", banner: true,
+      som: "repetido", banner: true, cartao: false,
     },
   };
 
@@ -109,6 +114,19 @@
   var DURACAO_MAX_SOM_MS = 120000; // trava: a sirene nunca toca para sempre
   var REENGATE_MS = 300000;        // silenciar sem atender: volta em 5 min
   var INTERVALO_DOM_MS = 4000;
+  var DURACAO_CARTAO_MS = 12000;   // quanto o cartao do Discreto fica na tela
+  /* Discreto: se o paciente que disparou o alarme continuar na fila, o
+   * cartao e as duas batidas voltam a cada 2 min — mais curto que o
+   * reengate do Completo (5 min) porque o Discreto e pensado para lembrar
+   * com frequencia, sem interromper. Ver agendarRepiqueDeEsperaDiscreto(). */
+  var INTERVALO_REPIQUE_DISCRETO_MS = 2 * 60000;
+  /* A MESMA chegada chega por caminhos que nao chegam juntos: o toast, o
+   * contador (lido de 4 em 4 s) e, na navegacao, a rede. Dentro desta
+   * janela, um sinal que nao traz NENHUM paciente alem dos que ja foram
+   * avisados e a mesma chegada vista por outro caminho. Tem que ser maior
+   * que o poll do DOM mais o atraso do toast — o DEBOUNCE_MS de 2,5 s nao
+   * era, e o resultado dependia da fase do poll (tests/alarme.test.js, I3). */
+  var JANELA_MESMA_CHEGADA_MS = 10000;
 
   var config = null;
   var shadow = null;
@@ -116,12 +134,16 @@
   var elBanner = null;
   var elMoldura = null;
   var elPainel = null;
+  var elCartao = null;
 
   var audioCtx = null;
   var tocando = false;
   var intervaloSirene = null;
   var timeoutLimite = null;
   var timeoutReengate = null;
+  var timeoutSomCurtoRepique = null;
+  var timeoutRepiqueDiscreto = null;
+  var timeoutCartao = null;
   var timers = [];
   var pararToast = null;
   var pararSuspensao = null;
@@ -131,6 +153,19 @@
   var ultimoContadorEm = 0;       // quando ultimoContador foi lido pela ULTIMA vez
   var ultimoDisparo = 0;
   var chegadaEm = null;           // quando o alarme comecou a tocar
+  var ultimaOrigem = null;        // cidade do ultimo paciente, so para o cartao Discreto
+
+  /* O que o alarme SABE sobre a fila, e quando soube. O numero sozinho
+   * nao basta: o contador "Aguardando" so existe na tela do Pronto
+   * Atendimento, e fora dela o ultimo numero lido e so um palpite que
+   * envelhece. Era isto que deixava a sirene voltando para um paciente que
+   * o medico ja estava atendendo. */
+  var alertados = 0;              // quantos pacientes ja foram avisados e ainda se acredita que esperam
+  var picoAvisado = 0;            // o maior numero que o ULTIMO alarme anunciou (so vale dentro da janela)
+  var chegadaConfirmadaPeloDom = false; // o contador da tela ja mostrava a chegada quando o alarme saiu?
+  var baseAssentada = false;      // a primeira contagem (DOM ou rede) so assenta a base
+  var chegadasSemRede = 0;        // chegadas avisadas por toast/contador desde a ultima resposta da rede
+  var motivoAtual = "chegada";    // "chegada" ou "ainda-aguardando": o que o aviso diz de si mesmo
 
   /* 3x o intervalo de polling do DOM — mesmo raciocinio do Assistente
    * Meeds (LIMITE_FRESCOR_DOM_MS): da folga para um ciclo perdido sem
@@ -250,22 +285,82 @@
     return partes.join(" · ") || "Novo paciente na fila";
   }
 
-  function sinalizarChegada(origem) {
+  /* contagem: quantos a FONTE diz que ha, ou undefined/null quando ela so
+   * sabe que "chegou alguem" (o toast). semJanela: a fonte provou, por
+   * identidade, que ha um paciente que nenhum aviso anterior cobriu —
+   * entao a janela de "mesma chegada" nao se aplica. */
+  function sinalizarChegada(origem, contagem, semJanela) {
     var agora = Date.now();
-    if (agora - ultimoDisparo < DEBOUNCE_MS) return; // toast + rede = um alarme
+    var desdeUltimo = agora - ultimoDisparo;
+    if (desdeUltimo < DEBOUNCE_MS) return false; // toast + rede = um alarme
+
+    var fresco = Fila.lerContadorAguardando();
+    var sabido = contagem !== undefined && contagem !== null ? contagem : fresco;
+
+    /* Mesma chegada, visto por outro caminho: dentro da janela e sem
+     * nenhum paciente alem dos que ja foram avisados. "Ja avisados" inclui
+     * o pico do ULTIMO alarme, e nao so `alertados`: se o toast chegou
+     * antes de o contador renderizar, o poll leu 0 e zerou `alertados` —
+     * e, quando o contador subiu para 1, a mesma chegada parecia nova. */
+    if (!semJanela && desdeUltimo < JANELA_MESMA_CHEGADA_MS &&
+        sabido !== null && sabido > 0 && sabido <= Math.max(alertados, picoAvisado)) {
+      /* So descarta; NAO absorve a leitura em `alertados`. Absorver parecia
+       * natural, mas engole o segundo paciente quando um sai e outro entra
+       * em menos de 10 s: ele pareceria "ja avisado" e nunca tocaria. Sem
+       * absorver, o contador continua "maior que os avisados" e o alarme
+       * dele sai quando a janela expira — atrasado, mas sai. Entre chegar
+       * 10 s tarde e nunca chegar, o primeiro e o erro barato. A mesma
+       * chegada vista duas vezes, o caso que a absorcao pretendia cobrir,
+       * ja e tratada acima: um 0 de renderizacao nao zera `alertados`. */
+      return false;
+    }
+
     ultimoDisparo = agora;
+    chegadaConfirmadaPeloDom = origem === "contador-dom" || (fresco !== null && fresco > 0);
+    if (origem !== "rede-queues-mine") chegadasSemRede++;
     console.debug("[Meeds B] chegada detectada por", origem);
-    dispararAlarme();
+    /* A cidade e lida NA HORA da chegada: e o unico momento em que se sabe
+     * qual selo pertence a quem acabou de entrar. Um repique 2 min depois
+     * so reusa este valor — nao le a tela de novo (ver agendarRepiqueDe-
+     * EsperaDiscreto). Se nao achar, o cartao mostra so a contagem. */
+    ultimaOrigem = Fila.lerOrigemDoUltimoPaciente();
+    /* A contagem usada no texto e a leitura FRESCA do cartao (feita acima),
+     * nao a do ultimo poll: quando quem disparou e o toast ou a rede, o
+     * proximo poll do DOM (a cada 4 s) ainda nao rodou. Mesma ideia do
+     * Assistente Meeds em atualizarDistintivo() — "le o cartao AGORA".
+     *
+     * Se ninguem sabe quantos sao (o cartao nao esta na tela e a fonte
+     * nao diz), a chegada AINDA E uma chegada: pelo menos mais um do que os
+     * ja avisados. Sem esse piso a contagem ficava em 0 e a escada inteira
+     * — titulo, favicone, notificacao do sistema, lembrete — era pulada
+     * justamente quando o medico estava em outra tela (C2). Na duvida,
+     * errar para MAIS: contar um a menos deixa um paciente sem aviso. */
+    var n = sabido !== null && sabido > 0
+      ? sabido
+      : Math.max(quantosAguardando(), alertados + 1, 1);
+    ultimoContador = n;
+    /* So uma LEITURA renova o frescor. Um piso estimado ("pelo menos 1")
+     * nao e leitura — e a mesma regra da D64: abstencao nao e prova. */
+    if (sabido !== null && sabido > 0) ultimoContadorEm = agora;
+    alertados = Math.max(alertados, n);
+    picoAvisado = n;
+    dispararAlarme("chegada");
+    return true;
   }
 
-  function dispararAlarme() {
+  /* motivo: "chegada" (padrao) ou "ainda-aguardando" (repique do Discreto:
+   * o MESMO paciente de 2 min atras continua na fila, ninguem novo
+   * chegou). So muda o TITULO do cartao — o resto do disparo e identico. */
+  function dispararAlarme(motivo) {
     if (tocando) return;
     var modo = intensidadeAtual();
     tocando = true;
     chegadaEm = Date.now();
+    motivoAtual = motivo || "chegada";
 
-    /* Faixa e moldura so no modo completo. No discreto o aviso e o som
-     * curto mais a escada de atencao; no silencioso, so a escada. */
+    /* Faixa e moldura so no modo completo. No discreto o aviso e o cartao
+     * mais o som curto (duas vezes) mais a escada de atencao; no
+     * silencioso, so a escada. */
     if (modo.banner) {
       atualizarBanner();
       if (elBanner) elBanner.hidden = false;
@@ -273,6 +368,8 @@
     }
 
     marcarAtencao(true);
+
+    if (modo.cartao) mostrarCartaoDeChegada(motivo);
 
     if (modo.som === "repetido") {
       tocarUmaVez();
@@ -284,31 +381,180 @@
        * para sempre depois da primeira vez. */
       timeoutLimite = setTimeout(silenciarComReengate, DURACAO_MAX_SOM_MS);
     } else if (modo.som === "curto") {
-      tocarUmaVez();
-      /* Um toque unico nao tem o que silenciar: o estado volta sozinho,
+      /* Toca DUAS vezes, espacadas pelo intervalo natural do proprio som
+       * (o mesmo intervaloMs que o modo completo usa para repetir a
+       * sirene) — uma vez so passava despercebida num plantao barulhento. */
+      var tipoCurto = somDaVez();
+      tocarUmaVez(tipoCurto);
+      timeoutSomCurtoRepique = setTimeout(function () {
+        timeoutSomCurtoRepique = null;
+        tocarUmaVez(tipoCurto);
+      }, tipoCurto.intervaloMs);
+      /* Nao ha o que silenciar num toque curto: o estado volta sozinho,
        * senao o proximo paciente nao dispararia nada (o guard `tocando`
-       * do topo barraria). O reengate continua valendo, porque a fila
-       * cheia sem ninguem atender ainda precisa insistir. */
-      timeoutLimite = setTimeout(silenciarComReengate, 4000);
+       * do topo barraria). Mas isto e o FIM NATURAL do toque, nao o medico
+       * reconhecendo o alarme — por isso NAO passa por silenciarAlarme():
+       * ate a v1.4.0 passava, e ele cancelava o repique de 2 min que acabou
+       * de ser agendado logo abaixo, 4 s depois (C3). Quem insiste no
+       * Discreto e o repique. */
+      timeoutLimite = setTimeout(fecharCicloCurto, 4000);
+      agendarRepiqueDeEsperaDiscreto();
     } else {
       /* Silencioso: nada a tocar nem a esconder, mas o ciclo precisa se
-       * fechar do mesmo jeito. */
-      timeoutLimite = setTimeout(silenciarComReengate, 4000);
+       * fechar do mesmo jeito — e, como no Discreto, e o FIM NATURAL dele:
+       * passar por silenciarAlarme() fechava a janela de aviso 4 s depois
+       * de aberta, a que o README diz que "fica ate alguem fechar". */
+      timeoutLimite = setTimeout(function () {
+        fecharCicloCurto();
+        armarReengate();
+      }, 4000);
     }
+  }
+
+  /* ------------------------------------------------------------------
+   * REPIQUE DE ESPERA — SO NO MODO DISCRETO
+   * ------------------------------------------------------------------
+   * UM SO TIMER, agendado a cada disparo do modo curto — nunca um por
+   * paciente. Cada vez que dispara, agenda a PROXIMA checagem em 2 min; na
+   * hora de checar, confere de novo se ainda ha alguem esperando E se a
+   * intensidade continua Discreto. Se qualquer uma das duas nao for mais
+   * verdade, para sozinho — sem precisar de um botao "silenciar" que o
+   * Discreto nunca teve.
+   *
+   * DE PROPOSITO NAO HA LIMITE DE REPETICOES: um alarme que desiste
+   * sozinho depois de N vezes pode deixar um paciente esperando sem
+   * ninguem saber. A saida para quem quer parar de ouvir e trocar para
+   * 🔕 Silencioso.
+   * ------------------------------------------------------------------ */
+  function agendarRepiqueDeEsperaDiscreto() {
+    if (timeoutRepiqueDiscreto) return; // ja ha um repique agendado
+    timeoutRepiqueDiscreto = setTimeout(function () {
+      timeoutRepiqueDiscreto = null;
+      if (quantosAguardando() <= 0) return;           // paciente ja saiu da fila
+      if (config.intensidade !== "discreto") {        // medico trocou de modo:
+        armarLembreteDeEspera();                      // o lembrete passa ao ritmo do novo modo
+        return;
+      }
+      /* Mesma regra do reengate (D64): sem leitura FRESCA do contador, nao
+       * toca as cegas — reagenda em silencio, no mesmo ritmo, e decide
+       * quando o medico voltar a tela da fila. */
+      if (!evidenciaFrescaDoContador()) {
+        console.debug("[Meeds B] sem leitura fresca da fila — repique reagendado em silencio");
+        timeoutRepiqueDiscreto = null;
+        agendarRepiqueDeEsperaDiscreto();
+        return;
+      }
+      console.debug("[Meeds B] paciente ainda esperando, repique do modo discreto");
+      dispararAlarme("ainda-aguardando");
+    }, INTERVALO_REPIQUE_DISCRETO_MS);
   }
 
   function pararSom() {
     if (intervaloSirene) { clearInterval(intervaloSirene); intervaloSirene = null; }
     if (timeoutLimite) { clearTimeout(timeoutLimite); timeoutLimite = null; }
+    if (timeoutSomCurtoRepique) { clearTimeout(timeoutSomCurtoRepique); timeoutSomCurtoRepique = null; }
+    /* O repique do Discreto NAO e som: e o lembrete. Esta funcao ja o
+     * cancelou uma vez, por ter "parar" no nome, e matou o recurso que a
+     * v1.4.0 trazia. Cancelar o lembrete e uma decisao — cancelarRepique(). */
+  }
+
+  function cancelarRepique() {
+    if (timeoutRepiqueDiscreto) { clearTimeout(timeoutRepiqueDiscreto); timeoutRepiqueDiscreto = null; }
+  }
+
+  /* Fim natural do toque curto (Discreto). Nao e uma acao do medico: nao
+   * esconde o cartao (ele tem a duracao dele), nao fecha a janela de aviso,
+   * nao arma o lembrete de 5 min nem cancela o de 2. So devolve o estado. */
+  function fecharCicloCurto() {
+    pararSom();
+    tocando = false;
+    chegadaEm = null;
+  }
+
+  /* A fila esvaziou — medido na tela, na rede, ou pelo medico ao clicar em
+   * Atender. Tudo que existia por haver "paciente esperando" perde o
+   * motivo: som, faixa, cartao, lembrete e contagem na aba. */
+  function aoFilaVazia() {
+    alertados = 0;
+    ultimoContador = 0;
+    if (timeoutReengate) { clearTimeout(timeoutReengate); timeoutReengate = null; }
+    cancelarRepique();
+    if (tocando) silenciarAlarme();
+    marcarAtencao(false); // com 0, limpa titulo, favicone e janela
+  }
+
+  /* Havia gente esperando quando o alarme ligou (aba recarregada, script
+   * atualizado). Nao toca agora — norma 3 — mas tambem nao pode ficar sem
+   * lembrete: sem nenhum timer, esse paciente esperaria para sempre se
+   * ninguem novo chegasse. */
+  function armarLembreteDeEspera() {
+    if (tocando || timeoutReengate || timeoutRepiqueDiscreto) return;
+    if (config.intensidade === "discreto") {
+      agendarRepiqueDeEsperaDiscreto();
+      return;
+    }
+    timeoutReengate = setTimeout(tentarReengatarAlarme, REENGATE_MS);
+  }
+
+  /* Toda contagem CONFIRMADA — cartao do DOM ou corpo da rede — passa por
+   * aqui. O que o resto do alarme consome e o numero E o instante em que
+   * ele foi visto. */
+  function registrarLeitura(n) {
+    ultimoContador = n;
+    ultimoContadorEm = Date.now();
+    if (!baseAssentada) {
+      baseAssentada = true;
+      alertados = n;                       // quem ja estava la nao e "chegada"
+      if (n > 0) armarLembreteDeEspera();
+    } else if (n < alertados) {
+      alertados = n;                       // alguem saiu: o proximo a chegar conta
+    }
+    if (n === 0) aoFilaVazia();
+  }
+
+  /* "Atender" clicado na linha de um paciente da fila e o sinal mais forte
+   * de que ele deixou de esperar — e chega ANTES de a tela mudar, quando o
+   * contador ainda existe. So vale na tela da fila: na Agenda o mesmo
+   * rotulo atende uma consulta MARCADA, que nao e quem esta na fila, e
+   * contar esse clique tiraria um paciente real da memoria do alarme.
+   * Se o rotulo mudar, isto simplesmente para de agir e o comportamento
+   * volta ao anterior (a contagem so cai quando alguem a le). */
+  function aoClicarNaPagina(ev) {
+    try {
+      var alvo = ev && ev.target;
+      var botao = alvo && typeof alvo.closest === "function" ? alvo.closest("button") : null;
+      if (!botao) return;
+      var rotulo = Fila.normalizar(botao.textContent);
+      if (rotulo !== Fila.ROTULO_ATENDER && rotulo.indexOf(Fila.ROTULO_ATENDER + " ") !== 0) return;
+      if (Fila.lerContadorAguardando() === null) return; // nao e a tela da fila
+      aoMedicoAtender();
+    } catch (e) {
+      /* silencioso: este sinal e reforco, nunca pode quebrar a pagina */
+    }
+  }
+
+  function aoMedicoAtender() {
+    var n = Math.max(0, quantosAguardando() - 1);
+    ultimoContador = n;
+    ultimoContadorEm = Date.now();
+    alertados = Math.min(alertados, n);
+    if (n === 0) {
+      aoFilaVazia();
+    } else {
+      if (tocando) atualizarBanner();
+      marcarAtencao(false);
+    }
   }
 
   function silenciarAlarme() {
     if (timeoutReengate) { clearTimeout(timeoutReengate); timeoutReengate = null; }
+    cancelarRepique(); // silenciar DE PROPOSITO tambem cala o lembrete
     pararSom();
     tocando = false;
     chegadaEm = null;
     if (elBanner) elBanner.hidden = true;
     if (elMoldura) elMoldura.hidden = true;
+    esconderCartao();
     /* A janela fecha junto com o silenciar: ela existe para chamar de
      * volta, e quem silenciou ja voltou. */
     if (Atencao) Atencao.fecharJanelaDeAviso();
@@ -317,13 +563,19 @@
     marcarAtencao(false);
   }
 
+  /* Volta em 5 min, se ainda houver quem esperar nessa hora. */
+  function armarReengate() {
+    if (timeoutReengate) { clearTimeout(timeoutReengate); timeoutReengate = null; }
+    if (quantosAguardando() <= 0) return;
+    timeoutReengate = setTimeout(tentarReengatarAlarme, REENGATE_MS);
+  }
+
   /* "Estou indo" — nao e "ignorar". Se o medico nao atender de fato, o
    * alarme volta, que e o acknowledge do plantao de software. */
   function silenciarComReengate() {
     var haviaFila = quantosAguardando() > 0;
     silenciarAlarme();
-    if (!haviaFila) return;
-    timeoutReengate = setTimeout(tentarReengatarAlarme, REENGATE_MS);
+    if (haviaFila) armarReengate();
   }
 
   /* Sem leitura fresca do contador (medico fora da tela da fila havera
@@ -332,7 +584,11 @@
    * tenta de novo mais tarde, na MESMA cadencia, ate uma leitura fresca
    * aparecer (o medico volta a tela, ou so o proximo poll de 4s pega o
    * contador visivel de novo). A corrente so morre quando ha PROVA fresca
-   * de fila vazia; ate la, ela so para de SOAR sem prova. */
+   * de fila vazia; ate la, ela so para de SOAR sem prova.
+   *
+   * Vale para TODO lembrete que soa sozinho: o reengate de 5 min, o lembrete
+   * de quem ja esperava quando o alarme ligou, e (via
+   * repiqueDeEsperaDiscreto) o repique de 2 min do Discreto. */
   function tentarReengatarAlarme() {
     timeoutReengate = null;
     if (!evidenciaFrescaDoContador()) {
@@ -340,7 +596,7 @@
       timeoutReengate = setTimeout(tentarReengatarAlarme, REENGATE_MS);
       return;
     }
-    if (quantosAguardando() > 0) dispararAlarme();
+    if (quantosAguardando() > 0) dispararAlarme("ainda-aguardando");
   }
 
   function marcarAtencao(podeNotificar) {
@@ -374,19 +630,78 @@
     });
   }
 
+  /* ------------------------------------------------------------------
+   * O CARTAO DISCRETO
+   * ------------------------------------------------------------------
+   * Aparece no canto de baixo pra cima, diz a cidade e o motivo, e sai
+   * sozinho. Nao bloqueia nada e nao repete som — e o meio-termo que
+   * faltava entre "sirene" e "nao fico sabendo". Mesma experiencia do
+   * Assistente Meeds (ver a nota de paridade la em cima).
+   * ------------------------------------------------------------------ */
+  function mostrarCartaoDeChegada(motivo) {
+    if (!elCartao) return;
+    var elTitulo = shadow.getElementById("mb-cartao-titulo");
+    var elCorpo = shadow.getElementById("mb-cartao-corpo");
+    if (!elTitulo || !elCorpo) return;
+
+    elTitulo.textContent =
+      motivo === "ainda-aguardando" ? "🔔 Paciente ainda aguardando" : "🔔 Novo paciente na fila";
+    elCorpo.innerHTML = "";
+    var linhas = [];
+    if (ultimaOrigem) linhas.push(ultimaOrigem);
+    linhas.push(textoDoMotivo());
+    linhas.forEach(function (linha) {
+      var p = document.createElement("div");
+      p.textContent = linha;
+      elCorpo.appendChild(p);
+    });
+
+    if (timeoutCartao) clearTimeout(timeoutCartao);
+    elCartao.hidden = false;
+    /* Forca reflow antes de aplicar a classe: sem isto o navegador as
+     * vezes agrupa "hidden=false" e a troca de classe no mesmo frame, e a
+     * animacao de subida some — o cartao so "aparece" sem deslizar. */
+    void elCartao.offsetHeight;
+    elCartao.classList.add("mb-cartao-visivel");
+    timeoutCartao = setTimeout(esconderCartao, DURACAO_CARTAO_MS);
+  }
+
+  function esconderCartao() {
+    if (timeoutCartao) { clearTimeout(timeoutCartao); timeoutCartao = null; }
+    if (!elCartao) return;
+    elCartao.classList.remove("mb-cartao-visivel");
+    elCartao.hidden = true;
+  }
+
   /* ---------------- sinais ---------------- */
 
   function lerContadorEReagir() {
     var n = Fila.lerContadorAguardando();
-    if (n === null) return; // fora do Pronto Atendimento: nada a dizer
-    ultimoContadorEm = Date.now();
-    var anterior = ultimoContador;
-    ultimoContador = n;
+    /* Fora do Pronto Atendimento o cartao nao existe: nao ha o que dizer —
+     * e tambem nada a DESdizer. O ultimo numero fica, e a IDADE dele
+     * (ultimoContadorEm) e o que qualquer lembrete consulta antes de soar
+     * (evidenciaFrescaDoContador). */
+    if (n === null) return;
 
-    if (anterior !== null && n > anterior) sinalizarChegada("contador-dom");
-    if (n === 0 && tocando) silenciarAlarme();   // fila esvaziou: cala sozinho
+    /* Um "0" logo depois de uma chegada que o contador AINDA NAO mostrava
+     * (o toast ou a rede chegaram antes de a tela renderizar) e atraso de
+     * renderizacao, nao "a fila esvaziou". Tratar como esvaziou calava o
+     * alarme da propria chegada com 1 s de vida e apagava o que ele acabara
+     * de aprender. Passada a janela, um 0 que persiste e verdadeiro; e um 0
+     * vindo da REDE nunca e adiado — ele e a resposta do servidor. */
+    if (n === 0 && !chegadaConfirmadaPeloDom && (alertados > 0 || tocando) &&
+        Date.now() - ultimoDisparo < JANELA_MESMA_CHEGADA_MS) {
+      return;
+    }
+
+    var haviaBase = baseAssentada;
+    registrarLeitura(n);
+    /* Chegada = mais gente do que a que ja foi AVISADA, nao "o numero
+     * subiu desde o poll anterior": a segunda definicao toca de novo para
+     * quem o toast ja anunciou e o contador so renderizou depois. */
+    if (haviaBase && n > alertados) sinalizarChegada("contador-dom", n);
     if (tocando) atualizarBanner();
-    if (n > 0 || anterior !== null) marcarAtencao(false);
+    if (n > 0) marcarAtencao(false);
   }
 
   function aoResponderFila(json) {
@@ -396,17 +711,43 @@
     } catch (e) {
       return; // formato inesperado: os outros sinais cobrem
     }
-    if (!ids.length && idsVistos === null) { idsVistos = {}; return; }
+    var total = null;
+    try {
+      total = Fila.contagemDaFila(json); // null = "nao sei", nunca "zero"
+    } catch (e) {
+      total = null;
+    }
 
+    var tinhaBase = idsVistos !== null;
     var atual = {};
-    var novo = false;
+    var novos = 0;
     for (var i = 0; i < ids.length; i++) {
       atual[ids[i]] = true;
-      if (idsVistos && !idsVistos[ids[i]]) novo = true;
+      if (tinhaBase && !idsVistos[ids[i]]) novos++;
     }
-    /* A primeira resposta so estabelece a base — nunca dispara. */
-    if (idsVistos !== null && novo) sinalizarChegada("rede-queues-mine");
     idsVistos = atual;
+
+    /* Chegadas que o toast ou o contador JA avisaram desde a ultima
+     * resposta. Sem este desconto, o clique no menu — que busca a fila e
+     * traz o MESMO paciente que acabou de ser anunciado — o contava como
+     * novo e tocava de novo, justamente quando o medico chegava para
+     * atender (H4). So o que sobra e chegada que ninguem avisou. */
+    var jaAvisadas = chegadasSemRede;
+    chegadasSemRede = 0;
+
+    /* A rede sabe QUANTOS, em qualquer tela. E a unica fonte que ve a fila
+     * vazia quando o contador nao esta na tela (C1). */
+    if (total !== null) {
+      registrarLeitura(total);
+      /* A primeira resposta tambem so assenta a base: se o DOM leu "0" de
+       * um esqueleto antes de os dados chegarem, quem ja esperava nao pode
+       * virar chegada so porque o numero subiu de 0 para N. */
+      if (!tinhaBase && total > alertados) alertados = total;
+    }
+
+    if (tinhaBase && novos - jaAvisadas > 0) {
+      sinalizarChegada("rede-queues-mine", total, true);
+    }
   }
 
   /* ------------------------------------------------------------------
@@ -449,7 +790,13 @@
         if (Fila.ehChamadaDaFila(xhr.__meedsBUrl)) {
           xhr.addEventListener("load", function () {
             try {
-              if (xhr.status === 200) aoResponderFila(JSON.parse(xhr.responseText));
+              if (xhr.status !== 200) return;
+              /* Com responseType "json" o responseText LANCA em vez de
+               * devolver o texto, e o corpo ja vem como objeto em
+               * `response`. Ler so responseText fazia este sinal morrer em
+               * silencio num app que configure o XHR assim. */
+              var corpo = xhr.responseType === "json" ? xhr.response : JSON.parse(xhr.responseText);
+              aoResponderFila(corpo);
             } catch (e) {
               /* silencioso */
             }
@@ -526,6 +873,21 @@
     "  border: 1.5px solid #0f766e; background: #fff; color: #0f766e; font: 700 12.5px system-ui, sans-serif;",
     "}",
     "#mb-liberar[hidden] { display: none; }",
+    /* O cartao do Discreto: nasce fora da tela (embaixo) e sobe. Some do
+       mesmo jeito, de baixo pra cima, sem precisar de um segundo bloco de
+       keyframes — so a posicao final muda com a classe. */
+    "#mb-cartao {",
+    "  position: fixed; right: 20px; bottom: 84px; z-index: 2147483001; width: 280px;",
+    "  background: #16221f; color: #fff; border-radius: 12px; padding: 12px 14px;",
+    "  box-shadow: 0 14px 40px rgba(0,0,0,.35); font: 400 12.5px system-ui, sans-serif;",
+    "  transform: translateY(16px); opacity: 0; pointer-events: none;",
+    "  transition: transform .22s ease, opacity .22s ease;",
+    "}",
+    "#mb-cartao[hidden] { display: none; }",
+    "#mb-cartao.mb-cartao-visivel { transform: translateY(0); opacity: 1; pointer-events: auto; }",
+    "#mb-cartao-titulo { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; }",
+    "#mb-cartao-corpo { color: #cbd5e1; line-height: 1.5; }",
+    "@media (prefers-reduced-motion: reduce) { #mb-cartao { transition: opacity .22s ease; } }",
   ].join("\n");
 
   function montarUI() {
@@ -541,7 +903,7 @@
     shadow.innerHTML +=
       '<div id="mb-moldura" hidden></div>' +
       '<div id="mb-banner" hidden>' +
-      "  <span>🚨 Novo paciente na fila!</span>" +
+      '  <span id="mb-banner-titulo">🚨 Novo paciente na fila!</span>' +
       '  <span id="mb-motivo"></span>' +
       '  <button type="button" id="mb-silenciar">Silenciar alarme</button>' +
       "</div>" +
@@ -569,12 +931,17 @@
       '  <div class="mb-dica" id="mb-janela-dica"></div>' +
       '  <div id="mb-estado"></div>' +
       '  <button type="button" class="acao" id="mb-liberar" hidden>Ativar avisos do sistema</button>' +
+      "</div>" +
+      '<div id="mb-cartao" hidden>' +
+      '  <div id="mb-cartao-titulo"></div>' +
+      '  <div id="mb-cartao-corpo"></div>' +
       "</div>";
 
     elMoldura = shadow.getElementById("mb-moldura");
     elBanner = shadow.getElementById("mb-banner");
     elBotao = shadow.getElementById("mb-botao");
     elPainel = shadow.getElementById("mb-painel");
+    elCartao = shadow.getElementById("mb-cartao");
     var elConfig = shadow.getElementById("mb-config");
 
     var sel = shadow.getElementById("mb-som");
@@ -673,7 +1040,14 @@
   }
 
   function atualizarBanner() {
-    var el = shadow && shadow.getElementById("mb-motivo");
+    if (!shadow) return;
+    var titulo = shadow.getElementById("mb-banner-titulo");
+    if (titulo) {
+      titulo.textContent = motivoAtual === "ainda-aguardando"
+        ? "🚨 Paciente ainda aguardando"
+        : "🚨 Novo paciente na fila!";
+    }
+    var el = shadow.getElementById("mb-motivo");
     if (el) el.textContent = textoDoMotivo();
   }
 
@@ -801,6 +1175,9 @@
     function quandoTiverCorpo() {
       if (!document.body) return setTimeout(quandoTiverCorpo, 200);
       montarUI();
+      /* Fase de captura: o clique em "Atender" precisa ser visto ANTES de o
+       * app trocar de tela e fazer o contador sumir. */
+      document.addEventListener("click", aoClicarNaPagina, true);
       pararToast = Fila.observarToast(function () { sinalizarChegada("toast-do-app"); });
       timers.push(setInterval(lerContadorEReagir, INTERVALO_DOM_MS));
       lerContadorEReagir();
@@ -843,7 +1220,12 @@
     _sinalizarChegada: function (o) { sinalizarChegada(o); },
     _aoResponderFila: function (j) { aoResponderFila(j); },
     _estado: function () {
-      return { tocando: tocando, aguardando: quantosAguardando(), intensidade: config && config.intensidade };
+      return {
+        tocando: tocando,
+        aguardando: quantosAguardando(),
+        alertados: alertados,
+        intensidade: config && config.intensidade,
+      };
     },
     /* Exposto para o teste de reengate (o mesmo defeito da D64 do
      * Assistente Meeds, ver evidenciaFrescaDoContador). Entra direto

@@ -15,7 +15,14 @@
   .painel { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; margin-top: 18px; }
   .painel h2 { font-size: 15px; margin: 0; padding: 16px 20px; border-bottom: 1px solid #e2e8f0; }
   #lista { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; min-height: 60px; }
-  .paciente { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; font-weight: 600; }
+  /* Imita a estrutura real da linha da fila (ver gravacao): avatar, nome
+     em negrito, selo de cidade minusculo, marcador "Novo" e "Atender". */
+  .paciente { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; }
+  .paciente .avatar { width: 36px; height: 36px; border-radius: 50%; background: #99f6e4; flex-shrink: 0; }
+  .paciente .info { flex: 1; }
+  .paciente .nome { font-weight: 600; }
+  .paciente .cidade { display: inline-block; margin-top: 4px; font-size: 12px; color: #6d28d9; background: #ede9fe; padding: 2px 8px; border-radius: 999px; }
+  .paciente .novo { font-size: 11px; font-weight: 700; background: #0f172a; color: #fff; padding: 3px 8px; border-radius: 6px; margin-right: 8px; }
   .barra { margin-top: 22px; display: flex; gap: 10px; flex-wrap: wrap; }
   button.sim { background: #0f766e; color: #fff; border: none; border-radius: 9px; padding: 10px 16px; font: 600 13px system-ui; cursor: pointer; }
   button.sim.cinza { background: #64748b; }
@@ -62,6 +69,19 @@
 <div id="toasts"></div>
 
 <script>
+  /* ?acelerar na URL: encurta timers longos (o repique de 2 min do modo
+     Discreto, a trava de 2 min da sirene) para testar sem esperar de
+     verdade. So mexe em atrasos > 10s — o debounce de 2,5s e os 4s do
+     toque curto continuam reais, entao o comportamento imediato nao muda. */
+  if (location.search.indexOf("acelerar") !== -1) {
+    const setTimeoutOriginal = window.setTimeout.bind(window);
+    window.setTimeout = function (fn, ms) {
+      const args = Array.prototype.slice.call(arguments, 2);
+      const ajustado = ms > 10000 ? Math.max(80, ms / 200) : ms;
+      return setTimeoutOriginal.apply(null, [fn, ajustado].concat(args));
+    };
+  }
+
   const log = (m) => {
     const el = document.getElementById("log");
     el.textContent += new Date().toLocaleTimeString() + "  " + m + "\n";
@@ -78,7 +98,23 @@
     fila.forEach((p) => {
       const d = document.createElement("div");
       d.className = "paciente";
-      d.textContent = "Paciente " + p.id.slice(0, 6) + " · macae";
+      d.innerHTML =
+        '<div class="avatar"></div>' +
+        '<div class="info">' +
+          '<div class="nome">Paciente ' + p.id.slice(0, 6) + '</div>' +
+          '<span class="cidade">macae</span>' +
+        '</div>' +
+        '<span class="novo">Novo</span>' +
+        '<button type="button">Atender</button>';
+      /* Como no app: aceitar o paciente tira ele da fila e LEVA PARA A
+         TELA DE CONSULTA, onde o cartao "Aguardando" nao existe. E o caso
+         que o alarme precisa fechar sozinho (tests/alarme.test.js, C1b). */
+      d.querySelector("button").onclick = () => {
+        fila = fila.filter((x) => x.id !== p.id);
+        contador = fila.length;
+        document.querySelector(".cartoes").style.display = "none";
+        log("Atender clicado: paciente saiu da fila e a tela mudou (cartoes escondidos)");
+      };
       lista.appendChild(d);
     });
   }
@@ -91,12 +127,35 @@
     setTimeout(() => t.remove(), 6000);
   }
 
-  /* Mock do endpoint, no formato mais provavel: lista de filas com os
-     pacientes dentro. */
+  /* Mock do endpoint no FORMATO REAL, observado em gravacoes de 17/09
+     (fila vazia) e 14/10 (com paciente): array de filas, cada uma com
+     "queue" (descritor), "items" (as entradas na fila) e "stats". Cada
+     item identifica a ENTRADA por consultationId e traz o paciente em
+     patient — nao ha "id" no proprio item. */
+  const itemReal = (p) => ({
+    consultationId: "c-" + p.id,
+    priority: "normal",
+    tenantId: "macae",
+    waitingSince: new Date().toISOString(),
+    patient: { id: p.id, name: "Paciente " + p.id.slice(0, 6), locality: {} },
+  });
   const original = window.fetch;
   window.fetch = function (url, opts) {
     if (String(url).indexOf("/api/doctor/queues/mine") !== -1) {
-      const corpo = { queues: [{ id: "q-macae", name: "macae", patients: fila.slice() }] };
+      const corpo = [
+        {
+          queue: { id: "e9abae67-44f9-41ac-9b83-8e85f6bc5c82", careLine: "medica", label: "Pronto atendimento" },
+          status: "ok",
+          items: fila.map(itemReal),
+          stats: { waiting: fila.length, inProgress: 0, completedToday: 2, avgDurationMinutes: 6 },
+        },
+        {
+          queue: { id: "b1f46bc2-c083-4186-ac2c-7a3b57f2b19b", careLine: "saude-mental", label: "Psicologia" },
+          status: "ok",
+          items: [],
+          stats: { waiting: 0, inProgress: 0, completedToday: 1, avgDurationMinutes: 43 },
+        },
+      ];
       log("GET /api/doctor/queues/mine -> " + fila.length + " paciente(s)");
       return Promise.resolve(new Response(JSON.stringify(corpo), {
         status: 200, headers: { "Content-Type": "application/json" },
