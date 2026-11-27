@@ -120,6 +120,7 @@ function carregar() {
   ctx.addEventListener = function () {};
   ctx.removeEventListener = function () {};
   vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(RAIZ, "src/visual.js"), "utf8"), ctx);
   vm.runInContext(fs.readFileSync(path.join(RAIZ, "src/alarme.js"), "utf8"), ctx);
 
   const api = ctx.MeedsB;

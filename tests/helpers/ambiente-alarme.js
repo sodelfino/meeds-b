@@ -32,7 +32,7 @@ const path = require("path");
 const vm = require("vm");
 
 const RAIZ = path.join(__dirname, "..", "..");
-const FONTES = ["src/atencao.js", "src/som.js", "src/fila.js", "src/alarme.js"];
+const FONTES = ["src/atencao.js", "src/som.js", "src/fila.js", "src/visual.js", "src/alarme.js"];
 
 /* ---------- a tela do Meeds Doctor ---------- */
 

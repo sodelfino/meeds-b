@@ -31,6 +31,7 @@
   "use strict";
 
   var Fila = raiz.MeedsBFila;
+  var Visual = raiz.MeedsBVisual;
   var Atencao = raiz.MeedsBAtencao;
   var SONS = raiz.MeedsBSom;
 
@@ -1017,14 +1018,15 @@
 
   var CSS = [
     ":host { all: initial; }",
+    Visual.CSS,
     "#mb-botao {",
     "  position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;",
     "  width: 52px; height: 52px; border-radius: 50%; border: none; cursor: pointer;",
-    "  font-size: 22px; line-height: 1; color: #fff; font-family: system-ui, sans-serif;",
+    "  padding: 0; background: #fff; display: flex; align-items: center; justify-content: center;",
     "  box-shadow: 0 6px 20px rgba(0,0,0,.28);",
     "}",
-    "#mb-botao.ligado { background: linear-gradient(135deg,#0ea5a4,#0f766e); }",
-    "#mb-botao.desligado { background: #64748b; }",
+    "#mb-botao svg { width: 30px; height: 30px; display: block; }",
+    "#mb-botao.desligado { background: #f1f3f5; }",
     /* Caminho visivel para os ajustes — sem ela, so clique direito ou
        shift+clique abrem o painel, e ninguem descobre isso sozinho. */
     "#mb-config {",
@@ -1072,10 +1074,10 @@
     "@media (prefers-reduced-motion: reduce) { #mb-banner, #mb-moldura { animation: none !important; } }",
     "#mb-painel {",
     "  position: fixed; right: 20px; bottom: 84px; z-index: 2147483002; width: 320px;",
-    "  background: #fff; color: #16221f; border-radius: 14px; padding: 16px 18px 18px;",
+    "  background: #fff; color: #16221f; border-radius: 20px; padding: 0 18px 18px;",
     "  box-shadow: 0 20px 60px rgba(0,0,0,.3); font: 400 13px system-ui, sans-serif;",
     "}",
-    "#mb-painel h2 { margin: 0 0 12px; font-size: 15px; }",
+    "#mb-painel .msc-head { margin: 0 -18px 4px; }",
     "#mb-painel label { display: block; font-size: 12px; font-weight: 600; color: #334155; margin: 12px 0 5px; }",
     "#mb-painel select, #mb-painel input[type=range] { width: 100%; box-sizing: border-box; }",
     "#mb-painel label.mb-linha { display:flex; align-items:center; gap:8px; font-weight:600; color:#1e293b; margin:12px 0 4px; cursor:pointer; }",
@@ -1134,7 +1136,7 @@
        * A engrenagem e so isso: um caminho obvio para a mesma tela. */
       '<button type="button" id="mb-config" title="Configurar Alarme de fila">⚙️</button>' +
       '<div id="mb-painel" hidden>' +
-      "  <h2>Alarme de fila</h2>" +
+      '  <div id="mb-cabecalho"></div>' +
       '  <label for="mb-intensidade">Quanto ele deve incomodar</label>' +
       '  <select id="mb-intensidade">' +
       '    <option value="completo">🔔 Completo</option>' +
@@ -1166,6 +1168,7 @@
       if (!Fila.clicarMenuProntoAtendimento()) raiz.location.reload();
     });
     elPainel = shadow.getElementById("mb-painel");
+    desenharCabecalho();
     elCartao = shadow.getElementById("mb-cartao");
     var elConfig = shadow.getElementById("mb-config");
 
@@ -1259,6 +1262,21 @@
     refletir();
   }
 
+  /* O subtitulo diz a intensidade atual, entao o cabecalho e redesenhado
+   * a cada refletir() — e o X precisa ser ligado de novo a cada vez. */
+  function desenharCabecalho() {
+    var el = shadow && shadow.getElementById("mb-cabecalho");
+    if (!el) return;
+    el.innerHTML = Visual.cabecalho({
+      titulo: "Alarme de fila",
+      subtitulo: "Modo " + intensidadeAtual().rotulo.toLowerCase(),
+      idFechar: "mb-fechar",
+    });
+    shadow.getElementById("mb-fechar").addEventListener("click", function () {
+      elPainel.hidden = true;
+    });
+  }
+
   function abrirPainel() {
     elPainel.hidden = !elPainel.hidden;
     if (!elPainel.hidden) refletirEstado();
@@ -1279,13 +1297,14 @@
   function refletir() {
     if (!elBotao) return;
     var modo = intensidadeAtual();
-    elBotao.textContent = modo.icone;
+    elBotao.innerHTML = Visual.sino(config.intensidade);
     elBotao.className = config.intensidade === "silencioso" ? "desligado" : "ligado";
     elBotao.title =
       "Alarme: " + modo.rotulo + " — " + modo.resumo +
       " Clique para trocar de intensidade, ⚙️ ao lado para configurar.";
 
     if (shadow) {
+      desenharCabecalho();
       var curto = modo.som === "curto";
       preencherSons(curto);
       var sel = shadow.getElementById("mb-som");
