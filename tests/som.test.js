@@ -55,6 +55,11 @@ ok("a biblioteca carrega e tem sons", ids.length > 0);
      "sem o campo `curto`: " + semCurto.join(", "));
 }
 
+/* --- o alerta de 3 notas (padrao desde a 1.6) --- */
+ok("alerta-3-notas existe e repete", SONS["alerta-3-notas"] && SONS["alerta-3-notas"].curto === false);
+ok("alerta-3-notas-curto existe e e curto", SONS["alerta-3-notas-curto"] && SONS["alerta-3-notas-curto"].curto === true);
+ok("alerta repete no maximo a cada 2,4 s", SONS["alerta-3-notas"].intervaloMs === 2400);
+
 /* --- as duas listas existem de verdade --- */
 {
   const curtos = ids.filter((i) => SONS[i].curto);

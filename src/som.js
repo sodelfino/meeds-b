@@ -21,7 +21,41 @@
 (function (raiz) {
   "use strict";
 
+  /* Tres pulsos de 150 ms (0 / 0,2 / 0,4 s), mi-la-Do# subindo. Triangulo
+   * mais um seno no dobro da frequencia (30% do ganho) para dar corpo sem
+   * estridencia; rampa de 10 ms na subida e exponencial no fim, sem estalo. */
+  function tocarAlerta3Notas(ctx, volume) {
+    var agora = ctx.currentTime;
+    [659.25, 880, 1108.73].forEach(function (f, i) {
+      var t = agora + i * 0.2;
+      [{ f: f, tipo: "triangle", v: 1 }, { f: f * 2, tipo: "sine", v: 0.3 }].forEach(function (p) {
+        var osc = ctx.createOscillator();
+        var g = ctx.createGain();
+        osc.type = p.tipo;
+        osc.frequency.setValueAtTime(p.f, t);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.linearRampToValueAtTime(0.32 * p.v * volume, t + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+        osc.connect(g).connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.16);
+      });
+    });
+  }
+
   var TIPOS_DE_SOM = {
+    "alerta-3-notas": {
+      nome: "Alerta (3 notas)",
+      curto: false,
+      intervaloMs: 2400,
+      tocar: tocarAlerta3Notas,
+    },
+    "alerta-3-notas-curto": {
+      nome: "Alerta curto (3 notas)",
+      curto: true,
+      intervaloMs: 1400,
+      tocar: tocarAlerta3Notas,
+    },
     "sirene-classica": {
       nome: "Sirene clássica (2 notas)",
       curto: false,

@@ -17,7 +17,10 @@
  *   - uma tela do Meeds Doctor de mentira (cartao "Aguardando", linhas de
  *     paciente com selo de cidade, a tela de Agenda sem contador);
  *   - a UI do proprio alarme como "stubs" que gravam o que o codigo faz;
- *   - Notification, AudioContext, MutationObserver e XMLHttpRequest falsos.
+ *   - Notification, AudioContext, MutationObserver, XMLHttpRequest e fetch
+ *     falsos. O fetch responde de forma SINCRONA (um "thenable" que chama o
+ *     callback na hora), para a resposta da consulta propria ser processada
+ *     dentro do mesmo avancar() que a disparou, como no navegador.
  *
  * O som e substituido por um contador (sons[]), porque o que importa para
  * o medico e QUANDO tocou, nao a forma de onda.
@@ -29,7 +32,7 @@ const path = require("path");
 const vm = require("vm");
 
 const RAIZ = path.join(__dirname, "..", "..");
-const FONTES = ["src/atencao.js", "src/som.js", "src/fila.js", "src/alarme.js"];
+const FONTES = ["src/atencao.js", "src/som.js", "src/fila.js", "src/atualizacao.js", "src/visual.js", "src/convite.js", "src/alarme.js"];
 
 /* ---------- a tela do Meeds Doctor ---------- */
 
@@ -62,7 +65,13 @@ function telaFila(aguardando, pacientes) {
       el("div", "", [p.novo === false ? el("span", "2 min") : el("span", "Novo"), el("button", "Atender")]),
     ])
   );
-  return el("div", "", [cartao].concat(linhas));
+  /* item de menu "Pronto atendimento": registra os cliques em .cliques */
+  const menu = el("a", "Pronto atendimento");
+  menu.cliques = 0;
+  menu.click = () => { menu.cliques++; };
+  const raiz = el("div", "", [menu, cartao].concat(linhas));
+  raiz.menu = menu;
+  return raiz;
 }
 
 /* Agenda e tela de consulta: o contador "Aguardando" nao existe aqui (F5). */
@@ -70,8 +79,8 @@ function telaSemContador(titulo) {
   return el("div", "", [el("h1", titulo || "Agenda"), el("div", "12")]);
 }
 
-/* O corpo real de /api/doctor/queues/mine (formato observado em 14/10).
- * itens = [{ c: consultationId, p: patient.id }] — vao na fila "Teste". */
+/* O corpo real de /api/doctor/queues/mine (formato observado na gravacao de 27/11).
+ * itens = [{ c: consultationId, p: patient.id, em: waitingSince ISO, ci: checkedInAt ISO (so reserva) }] — vao na fila "Teste". */
 function filaReal(itens) {
   const lista = itens || [];
   return [
@@ -80,10 +89,12 @@ function filaReal(itens) {
     { queue: { id: "q-teste", careLine: "medica", label: "Teste", specialty: "GENERALISTA", isAvailable: true },
       status: "ok",
       items: lista.map((i) => {
-        const item = { priority: "normal", tenantId: "macae", waitingSince: "2026-10-14T14:21:19.471Z",
+        const item = { priority: "normal", tenantId: "macae",
                        patient: { name: "NOME QUE NUNCA PODE VAZAR", locality: {} } };
         if (i.c) item.consultationId = i.c;
         if (i.p) item.patient.id = i.p;
+        if (i.em) item.waitingSince = i.em;
+        if (i.ci) item.checkedInAt = i.ci;
         return item;
       }),
       stats: { waiting: lista.length, inProgress: 0, completedToday: 0, avgDurationMinutes: 0 } },
@@ -198,18 +209,82 @@ function criarAmbiente(opcoes) {
     notificacoes.push(this);
   }
   NotificacaoFalsa.permission = o.permissaoDeNotificacao || "granted";
+  /* ordem das chamadas que dependem de um clique "quente" (janela antes da permissao) */
+  const ordem = [];
+  NotificacaoFalsa.requestPermission = function () {
+    ordem.push("requestPermission");
+    NotificacaoFalsa.permission = o.respostaDaPermissao || "granted";
+    return Promise.resolve(NotificacaoFalsa.permission);
+  };
 
   function XHRFalso() { this._ouvintes = {}; this.status = 0; this.responseText = ""; this.response = null; }
-  XHRFalso.prototype.open = function (m, u) { this._url = u; };
+  XHRFalso.prototype.open = function (m, u) { this._url = u; this._metodo = m; };
+  XHRFalso.prototype.setRequestHeader = function () {};
   XHRFalso.prototype.send = function () {};
   XHRFalso.prototype.addEventListener = function (ev, fn) {
     (this._ouvintes[ev] = this._ouvintes[ev] || []).push(fn);
   };
 
+  /* fetch falso: cada chamada consome a proxima de respostasDeFetch
+   * ({status, corpo} ou "pendurar"); com a fila vazia, pendura — assim os
+   * testes antigos, que nao pensam em consulta, nao recebem fila nenhuma. */
+  const respostasDeFetch = [];
+  const chamadasDeFetch = [];
+  function resolvido(v) {
+    return {
+      then(f) {
+        try { const x = f ? f(v) : v; return x && typeof x.then === "function" ? x : resolvido(x); }
+        catch (e) { return rejeitado(e); }
+      },
+      catch() { return this; },
+    };
+  }
+  function rejeitado(e) {
+    return {
+      then(f, r) { return r ? resolvido(e).then(r) : this; },
+      catch(r) { return this.then(null, r); },
+    };
+  }
+  /* pendurado: nunca responde — so rejeita se o chamador abortar (AbortController) */
+  function pendurado(sinal) {
+    const aoRejeitar = [];
+    const p = { then(f, r) { if (r) aoRejeitar.push(r); return p; }, catch(r) { aoRejeitar.push(r); return p; } };
+    if (sinal) sinal.addEventListener("abort", () => aoRejeitar.forEach((r) => r(new Error("AbortError"))));
+    return p;
+  }
+  /* o .meta.js da verificacao de atualizacao tem fila propria (por URL), para
+   * nunca consumir as respostas da consulta da fila: {status, texto} ou "pendurar" */
+  const respostasDeMeta = [];
+  const chamadasDeMeta = [];
+  function fetchFalso(url, opcoes) {
+    if (/\.meta\.js(\?|$)/.test(String(url))) {
+      chamadasDeMeta.push({ url, opcoes });
+      const m = respostasDeMeta.shift();
+      if (!m || m === "pendurar") return pendurado(opcoes && opcoes.signal);
+      return resolvido({ status: m.status, ok: m.status >= 200 && m.status < 300, text() { return resolvido(m.texto); } });
+    }
+    chamadasDeFetch.push({ url, opcoes });
+    const r = respostasDeFetch.shift();
+    if (!r || r === "pendurar") return pendurado(opcoes && opcoes.signal);
+    const resposta = {
+      status: r.status, ok: r.status >= 200 && r.status < 300,
+      json() { return resolvido(r.corpo); },
+      clone() { return resposta; },
+    };
+    return resolvido(resposta);
+  }
+
   class DataFalsa extends Date { static now() { return agora; } }
 
   const janelas = [];
+  const aberturas = [];
+  let recargas = 0;
+  let janelaBloqueada = !!o.janelaBloqueada;
   armazem["meeds-b:config"] = JSON.stringify({ intensidade: o.intensidade || "completo", janela: !!o.janela });
+  /* `guardado`: preferencia ja gravada, lida pelo GM_getValue (como no
+   * Tampermonkey) em vez do localStorage. O objeto e o "disco". */
+  const disco = {};
+  if (o.guardado) disco["meeds-b:config"] = o.guardado;
 
   const ctx = {
     console: {
@@ -231,15 +306,29 @@ function criarAmbiente(opcoes) {
     AudioContext: function () { this.state = "running"; this.resume = () => Promise.resolve(); },
     Notification: NotificacaoFalsa,
     XMLHttpRequest: XHRFalso,
+    fetch: fetchFalso,
+    URL,
+    location: { origin: "https://doctor.calltechsaude.com.br", href: "https://doctor.calltechsaude.com.br/fila",
+                reload() { recargas++; } },
+    AbortController,
     MutationObserver: function (cb) { aoMutar = cb; this.observe = () => {}; this.disconnect = () => {}; },
     focus() {},
     screen: { width: 1920 },
-    open() {
+    open(url) {
+      ordem.push("open");
+      aberturas.push(url);
+      if (janelaBloqueada) return null; // o Chrome devolve null quando bloqueia o pop-up
       const j = { closed: false, close() { j.closed = true; }, document: { open() {}, write() {}, close() {} } };
       janelas.push(j);
       return j;
     },
   };
+  if (o.navegador) ctx.navigator = o.navegador;
+  if (o.guardado) {
+    ctx.GM_getValue = (k, padrao) => (k in disco ? disco[k] : padrao);
+    ctx.GM_setValue = (k, v) => { disco[k] = v; };
+  }
+  ctx.MeedsBVersao = o.versao || "1.6.0";
   ctx.window = ctx;
   ctx.globalThis = ctx;
   vm.createContext(ctx);
@@ -257,10 +346,18 @@ function criarAmbiente(opcoes) {
     iniciar() { ctx.MeedsB.iniciar(); },
     avancar,
     agora: () => agora,
-    notificacoes, sons, logs, janelas,
+    ordem,
+    passoDoConvite: () => ctx.MeedsB._passoDoConvite(),
+    recargas: () => recargas,
+    bloquearJanela(v) { janelaBloqueada = !!v; },
+    notificacoes, sons, logs, janelas, respostasDeFetch, chamadasDeFetch, respostasDeMeta, chamadasDeMeta,
+    janelasAbertas: () => aberturas,
     titulo: () => documento.title,
     estado: () => ctx.MeedsB._estado(),
+    config: () => ctx.MeedsB._estado().config,
+    disco: () => disco,
     ui: (id) => stubDe(id),
+    stub: (id) => stubDe(id),
     armazenado: () => JSON.stringify(armazem),
 
     mostrarTela(t) {
@@ -290,6 +387,29 @@ function criarAmbiente(opcoes) {
       (x._ouvintes.load || []).forEach((f) => f());
     },
 
+    /* a tela buscando a fila por XHR, com os cabecalhos dela (ex.: o token) */
+    appBuscaFila(corpo, opts) {
+      const x = new ctx.XMLHttpRequest();
+      x.open("GET", "https://api.calltechsaude.com.br/api/doctor/queues/mine");
+      const h = (opts && opts.headers) || {};
+      Object.keys(h).forEach((k) => x.setRequestHeader(k, h[k]));
+      x.withCredentials = !!(opts && opts.withCredentials);
+      x.send();
+      x.status = 200;
+      x.responseText = JSON.stringify(corpo);
+      (x._ouvintes.load || []).forEach((f) => f());
+    },
+
+    /* o "Atender" do app: POST .../consultations/{id}/claim e a resposta (so o status importa) */
+    claim(id, status) {
+      const x = new ctx.XMLHttpRequest();
+      x.open("POST", "https://api.calltechsaude.com.br/api/doctor/consultations/" + id + "/claim");
+      x.send();
+      x.status = status;
+      x.responseText = "";
+      (x._ouvintes.load || []).forEach((f) => f());
+    },
+
     /* um clique na pagina (fase de captura, como o alarme escuta) */
     clicarNaPagina(alvo) {
       (ouvintesDoc.click || []).forEach((f) => f({ target: alvo, composedPath: () => [] }));
@@ -302,6 +422,9 @@ function criarAmbiente(opcoes) {
       (stubDe(id)._ouvintes.click || []).forEach((f) =>
         f({ shiftKey: false, preventDefault() {}, stopPropagation() {}, target: stubDe(id) })
       );
+    },
+    teclar(id, key) {
+      (stubDe(id)._ouvintes.keydown || []).forEach((f) => f({ key, preventDefault() {}, stopPropagation() {} }));
     },
     mudarIntensidade(valor) {
       (stubDe("mb-intensidade")._ouvintes.change || []).forEach((f) => f({ target: { value: valor } }));

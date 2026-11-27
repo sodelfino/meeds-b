@@ -59,10 +59,10 @@ cenario("I4: quem ja esperava ao ligar nao toca agora, mas tambem nao e esquecid
    * fila nao pode dar sirene — mas tambem nao pode apagar o paciente da
    * memoria do alarme: sem timer nenhum, ele esperaria para sempre. */
   const A = ligar({ intensidade: "completo", tela: telaFila(1, PAC) });
-  A.avancar(4 * MIN);
-  ok("nada tocou nos primeiros minutos", A.sons.length === 0, String(A.sons.length));
-  A.avancar(2 * MIN);
-  ok("o lembrete de 5 min chega", A.sons.length > 0, String(A.sons.length));
+  A.avancar(50 * SEG);
+  ok("nada tocou no primeiro minuto", A.sons.length === 0, String(A.sons.length));
+  A.avancar(30 * SEG);
+  ok("o lembrete de 1 min chega", A.sons.length > 0, String(A.sons.length));
   ok("e se apresenta como lembrete, nao como chegada",
      /ainda aguardando/i.test(A.ui("mb-banner-titulo").textContent), A.ui("mb-banner-titulo").textContent);
 });
@@ -83,20 +83,20 @@ cenario("Discreto: chegada mostra o cartao com cidade e contagem, e toca duas ve
   ok("nao e a faixa do modo completo", !A.bannerVisivel());
 });
 
-cenario("C3: Discreto volta a cada 2 min enquanto o paciente continua esperando", () => {
+cenario("C3: Discreto volta a cada 1 min enquanto o paciente continua esperando", () => {
   const A = ligar({ intensidade: "discreto" });
   A.mostrarTela(telaFila(1, PAC));
   A.toast();
   const t0 = A.agora();
-  A.avancar(61 * SEG);
-  ok("com 1 min ainda so as 2 batidas da chegada", A.sons.length === 2, String(A.sons.length));
-  A.avancar(61 * SEG);
-  const aos2 = A.sons.filter((s) => s.t - t0 >= 115 * SEG && s.t - t0 <= 135 * SEG).length;
-  ok("aos 2 min o lembrete toca de novo (2 batidas)", aos2 === 2, aos2 + " batidas");
+  A.avancar(30 * SEG);
+  ok("com 30 s ainda so as 2 batidas da chegada", A.sons.length === 2, String(A.sons.length));
+  A.avancar(45 * SEG);
+  const aos1 = A.sons.filter((s) => s.t - t0 >= 55 * SEG && s.t - t0 <= 75 * SEG).length;
+  ok("aos 1 min o lembrete toca de novo (2 batidas)", aos1 === 2, aos1 + " batidas");
   ok("e o cartao diz que ele AINDA espera", /ainda aguardando/i.test(A.cartao().titulo), A.cartao().titulo);
-  A.avancar(2 * MIN);
-  const aos4 = A.sons.filter((s) => s.t - t0 >= 235 * SEG && s.t - t0 <= 255 * SEG).length;
-  ok("e continua: novo lembrete aos 4 min", aos4 === 2, aos4 + " batidas");
+  A.avancar(MIN);
+  const aos2 = A.sons.filter((s) => s.t - t0 >= 115 * SEG && s.t - t0 <= 135 * SEG).length;
+  ok("e continua: novo lembrete 1 min depois", aos2 === 2, aos2 + " batidas");
 });
 
 cenario("Discreto: se a fila esvazia antes do lembrete, ele nao toca", () => {
@@ -134,7 +134,7 @@ cenario("C2: chegada com o contador fora da tela (medico na Agenda) ainda sobe p
 /* A POLITICA DOS LEMBRETES (D64 — "abstencao nao e prova de ainda cheia")
  *
  * Quem decide se um lembrete pode soar e a IDADE da ultima leitura do
- * contador: ate LIMITE_FRESCOR_CONTADOR_MS (12 s) ele toca; sem leitura
+ * contador: ate LIMITE_FRESCOR_CONTADOR_MS (40 s) ele toca; sem leitura
  * fresca, reagenda em silencio no mesmo ritmo e decide quando o medico
  * voltar a tela da fila. Nao desiste — so nao soa sem prova.
  *
@@ -163,7 +163,7 @@ cenario("C2c/D64: Discreto sem contador legivel — o repique espera leitura fre
   A.avancar(2 * MIN + 10 * SEG);
   ok("so as 2 batidas da chegada: repique nao toca sem leitura", A.sons.length === 2, String(A.sons.length));
   A.mostrarTela(telaFila(1, PAC));
-  A.avancar(2 * MIN + 10 * SEG);
+  A.avancar(70 * SEG);
   ok("com a fila de volta a tela, o repique toca", A.sons.length === 4, String(A.sons.length));
 });
 
@@ -226,7 +226,7 @@ cenario("C1e: voltar ao Pronto Atendimento e ler 0 limpa tudo, inclusive o lembr
   const A = ligar({ intensidade: "completo" });
   A.mostrarTela(telaFila(1, PAC));
   A.toast();
-  A.clicar("mb-silenciar");              // "estou indo": agenda o lembrete de 5 min
+  A.clicar("mb-silenciar");              // "estou indo": agenda o lembrete de 1 min
   A.mostrarTela(telaSemContador("Consulta"));
   A.avancar(2 * MIN);
   A.mostrarTela(telaFila(0, []));        // volta, e a fila esta vazia
@@ -328,7 +328,7 @@ cenario("duas chegadas de verdade, separadas por tempo, sao dois alarmes", () =>
 
 /* ---------------- regressao do que ja funcionava ---------------- */
 
-cenario("Completo: sirene repete, para no teto de 120 s e volta em 5 min se ainda ha fila", () => {
+cenario("Completo: sirene repete, para no teto de 120 s e volta em 1 min se ainda ha fila", () => {
   const A = ligar({ intensidade: "completo" });
   A.mostrarTela(telaFila(1, PAC));
   A.toast();
@@ -338,20 +338,20 @@ cenario("Completo: sirene repete, para no teto de 120 s e volta em 5 min se aind
   A.avancar(115 * SEG);
   ok("parou no teto de 120 s", !A.estado().tocando && !A.bannerVisivel());
   const n = A.sons.length;
-  A.avancar(60 * SEG);
+  A.avancar(30 * SEG);
   ok("silencio entre o teto e o reengate", A.sons.length === n);
-  A.avancar(250 * SEG);
+  A.avancar(40 * SEG);
   ok("o reengate toca e a faixa volta", A.sons.length > n && A.bannerVisivel());
 });
 
-cenario("Silenciar: volta em 5 min se ainda ha fila", () => {
+cenario("Silenciar: volta em 1 min se ainda ha fila", () => {
   const A = ligar({ intensidade: "completo" });
   A.mostrarTela(telaFila(1, PAC));
   A.toast();
   A.clicar("mb-silenciar");
   ok("silenciou", !A.estado().tocando && !A.bannerVisivel());
   const n = A.sons.length;
-  A.avancar(5 * MIN + 10 * SEG);
+  A.avancar(70 * SEG);
   ok("voltou a tocar", A.sons.length > n, A.sons.length - n + " toques");
 });
 
@@ -402,12 +402,12 @@ cenario("janela de aviso: fecha quando a fila esvazia", () => {
   ok("fechada", A.janelas[0].closed === true);
 });
 
-cenario("Silencioso: o lembrete de 5 min continua existindo", () => {
+cenario("Silencioso: o lembrete de 1 min continua existindo", () => {
   const A = ligar({ intensidade: "silencioso" });
   A.foraDaAba(true);
   A.mostrarTela(telaFila(1, PAC));
   A.toast();
-  A.avancar(5 * MIN + 10 * SEG);
+  A.avancar(70 * SEG);
   ok("notificou de novo", A.notificacoes.length >= 2, String(A.notificacoes.length));
 });
 
@@ -451,6 +451,15 @@ cenario("a rede diz 0: cala na hora, sem esperar janela", () => {
   A.toast();                       // chegada nao confirmada pelo DOM
   A.responder(filaReal([]));       // o servidor diz que nao ha ninguem
   ok("calou", A.estado().tocando === false);
+});
+
+cenario("padrao novo do som: migra quem estava no antigo, uma vez so", () => {
+  let A = ligar({ guardado: { som: "sirene-classica", somCurto: "toque-duplo", intensidade: "completo" } });
+  ok("migra som padrao antigo", A.config().som === "alerta-3-notas" && A.config().somCurto === "alerta-3-notas-curto");
+  A = ligar({ guardado: { som: "campainha", somCurto: "gota", intensidade: "completo" } });
+  ok("mantem escolha do medico", A.config().som === "campainha" && A.config().somCurto === "gota");
+  A = ligar({ guardado: { som: "sirene-classica", somCurto: "toque-duplo", padraoV: 2 } });
+  ok("nao migra duas vezes", A.config().som === "sirene-classica");
 });
 
 console.log(falhas ? "\n" + falhas + " FALHA(S)" : "\ntodos passaram");

@@ -19,8 +19,9 @@
  *
  *   C. RESPOSTA DE /api/doctor/queues/mine  (reforco)
  *      A tela consulta esse endereco sozinha. Nos so LEMOS a resposta
- *      que ja passou — nunca fazemos requisicao propria, nunca pedimos
- *      dado de outro profissional. O formato do corpo nao foi observado
+ *      que ja passou e, depois da primeira chamada da tela, fazemos UMA
+ *      consulta propria, so de leitura, a esta mesma fila (a do medico
+ *      logado, a cada 15 s) — nunca pedimos dado de outro profissional. O formato do corpo nao foi observado
  *      em nenhuma gravacao, entao a leitura aqui e deliberadamente
  *      generica: conta quantos objetos com "id" existem na resposta e
  *      nao presume nome de campo nenhum. Se o formato nao bater, este
@@ -250,6 +251,28 @@
     return String(url || "").indexOf(CAMINHO_DA_FILA) !== -1;
   }
 
+  /* "Atender" chama POST .../api/doctor/consultations/{id}/claim. So o
+   * metodo e o caminho importam; o corpo da resposta e dado de paciente e
+   * ninguem o le. */
+  function ehChamadaDeClaim(url, metodo) {
+    if (String(metodo || "GET").toUpperCase() !== "POST") return false;
+    var caminho = String(url || "").split("?")[0];
+    return /\/api\/doctor\/consultations\/[^\/]+\/claim$/.test(caminho);
+  }
+
+  /* Leva o medico a tela da fila clicando no item de menu — o clique que
+   * ele mesmo daria. false = nao achou o item (o chamador so esconde a barra). */
+  function clicarMenuProntoAtendimento() {
+    if (!doc) return false;
+    var itens = doc.querySelectorAll("a, button, [role=link]");
+    for (var i = 0; i < itens.length; i++) {
+      if (normalizar(itens[i].textContent) !== "pronto atendimento") continue;
+      itens[i].click();
+      return true;
+    }
+    return false;
+  }
+
   /* Colhe os ids das FOLHAS: objetos que tem "id" e que nao contem
    * nenhum outro objeto com "id" dentro. Isso importa mais do que
    * parece — o endereco se chama /queues/mine, entao o mais provavel e
@@ -340,11 +363,35 @@
     return total;
   }
 
+  /* Chegada de cada consulta, so no formato observado (lista de
+   * { queue, items }); qualquer outro devolve []. waitingSince (ISO do
+   * servidor, campo do item da fila) e a chegada; checkedInAt fica de
+   * reserva; nenhum valido -> chegadaMs null. */
+  function chegadasDaFila(json) {
+    var saida = [];
+    if (!Array.isArray(json)) return saida;
+    for (var i = 0; i < json.length; i++) {
+      var f = json[i];
+      if (!f || typeof f !== "object" || !f.queue || !Array.isArray(f.items)) continue;
+      for (var j = 0; j < f.items.length; j++) {
+        var chave = chaveDoItem(f.items[j]);
+        if (chave === null) continue;
+        var ms = Date.parse(f.items[j].waitingSince);
+        if (isNaN(ms)) ms = Date.parse(f.items[j].checkedInAt);
+        saida.push({ id: chave, chegadaMs: isNaN(ms) ? null : ms });
+      }
+    }
+    return saida;
+  }
+
   raiz.MeedsBFila = {
+    chegadasDaFila: chegadasDaFila,
     lerContadorAguardando: lerContadorAguardando,
     lerOrigemDoUltimoPaciente: lerOrigemDoUltimoPaciente,
     observarToast: observarToast,
     ehChamadaDaFila: ehChamadaDaFila,
+    ehChamadaDeClaim: ehChamadaDeClaim,
+    clicarMenuProntoAtendimento: clicarMenuProntoAtendimento,
     idsDeFolhas: idsDeFolhas,
     contagemDaFila: contagemDaFila,
     normalizar: normalizar,

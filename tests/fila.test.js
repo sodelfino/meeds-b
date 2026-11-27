@@ -280,5 +280,35 @@ function aninhar(n) {
      disparos("x ".repeat(500) + "novo paciente na fila") === 0);
 }
 
+/* 10. menu "Pronto atendimento" e a chamada de claim */
+{
+  const menu = el("a", "Pronto atendimento");
+  menu.cliques = 0;
+  menu.click = () => { menu.cliques++; };
+  const com = ambiente(el("div", "", [el("a", "Agenda"), menu]));
+  ok("acha o item e clica", com.MeedsBFila.clicarMenuProntoAtendimento() === true && menu.cliques === 1);
+  const sem = ambiente(el("div", "", [el("a", "Agenda")]));
+  ok("sem o item devolve false", sem.MeedsBFila.clicarMenuProntoAtendimento() === false);
+  const C = com.MeedsBFila.ehChamadaDeClaim;
+  const U = "https://api.calltechsaude.com.br/api/doctor/consultations/abc-1/claim";
+  ok("ehChamadaDeClaim aceita o POST", C(U, "POST") === true);
+  ok("recusa GET", C(U, "GET") === false && C(U) === false);
+  ok("recusa /start", C(U.replace("/claim", "/start"), "POST") === false);
+}
+
+{
+  const C = ambiente().MeedsBFila.chegadasDaFila;
+  const fila = (item) => [{ queue: { id: "q" }, items: [item] }];
+  const W = "2026-11-27T12:34:38.338Z", K = "2026-11-27T12:00:00.000Z";
+  const ms = (j) => C(fila(Object.assign({ consultationId: "c1" }, j)))[0].chegadaMs;
+  ok("waitingSince valido vira chegadaMs", ms({ waitingSince: W }) === Date.parse(W));
+  ok("waitingSince vence checkedInAt", ms({ waitingSince: W, checkedInAt: K }) === Date.parse(W));
+  ok("so checkedInAt: usa ele", ms({ checkedInAt: K }) === Date.parse(K));
+  ok("waitingSince invalido cai no checkedInAt", ms({ waitingSince: "x", checkedInAt: K }) === Date.parse(K));
+  ok("nenhum dos dois: null", ms({}) === null);
+  ok("data invalida: null", ms({ waitingSince: "x" }) === null);
+  ok("formato desconhecido: []", C({ outra: "coisa" }).length === 0 && C(null).length === 0);
+}
+
 console.log(falhas ? `\n${falhas} FALHA(S)` : "\ntodos passaram");
 process.exit(falhas ? 1 : 0);

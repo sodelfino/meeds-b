@@ -16,7 +16,7 @@
  *   medico na aba, olhando  -> som + banner
  *   aba de fundo            -> contador no titulo e no favicone
  *   fora do navegador       -> notificacao do sistema, clicavel
- *   ninguem reagiu          -> reengate em 5 min, e renotifica
+ *   ninguem reagiu          -> reengate em 1 min, e renotifica
  * A escada existe porque alarme mais alto nao resolve: o que resolve e
  * chegar no canal onde o medico esta. Ver o README.
  *
@@ -31,6 +31,9 @@
   "use strict";
 
   var Fila = raiz.MeedsBFila;
+  var Visual = raiz.MeedsBVisual;
+  var Convite = raiz.MeedsBConvite;
+  var Atualizacao = raiz.MeedsBAtualizacao;
   var Atencao = raiz.MeedsBAtencao;
   var SONS = raiz.MeedsBSom;
 
@@ -42,12 +45,14 @@
    * confundem mais do que ajudam, e foi exatamente o que o medico
    * reportou: o sino em si parecia "quebrado" ate ele achar a chave
    * escondida no painel. Ver README ("As tres intensidades"). */
+  var PADRAO_V = 2; // versao do padrao de som, ver carregarConfig()
   var PADRAO = {
-    som: "sirene-classica",       // usado no modo completo (repete)
-    somCurto: "toque-duplo",      // usado no modo discreto (toca uma vez)
+    som: "alerta-3-notas",       // usado no modo completo (repete)
+    somCurto: "alerta-3-notas-curto", // usado no modo discreto (toca uma vez)
     volume: 70,
     intensidade: "completo",      // "silencioso" | "discreto" | "completo"
     janela: false,                // pop-up: opcional, nasce desligado
+    convite: "pendente",          // "pendente" | "visto": o convite aos avisos fora da aba aparece uma vez
   };
 
   /* ------------------------------------------------------------------
@@ -64,7 +69,7 @@
    * PARIDADE COM O ASSISTENTE MEEDS (sodelfino/meeds-suite)
    * La o Discreto mostra um cartao no canto com a cidade de quem chegou, o
    * som curto toca DUAS vezes (uma vez so passa despercebida num plantao
-   * barulhento) e volta a cada 2 min enquanto o paciente continuar
+   * barulhento) e volta a cada 1 min enquanto o paciente continuar
    * esperando. Isto aqui e a mesma experiencia, com a mesma cautela: o
    * cartao mostra so a CIDADE (o selo minusculo do paciente), nunca o
    * nome — ver lerOrigemDoUltimoPaciente() em src/fila.js e a nota de
@@ -80,7 +85,7 @@
     discreto: {
       rotulo: "Discreto",
       icone: "🔉",
-      resumo: "Um cartão no canto com a cidade de quem chegou, e um som curto que toca duas vezes — e volta a cada 2 min se o paciente continuar esperando.",
+      resumo: "Um cartão no canto com a cidade de quem chegou, e um som curto que toca duas vezes — e volta a cada 1 min se o paciente continuar esperando.",
       som: "curto", banner: false, cartao: true,
     },
     completo: {
@@ -112,14 +117,25 @@
 
   var DEBOUNCE_MS = 2500;         // dois sinais da mesma chegada = um alarme
   var DURACAO_MAX_SOM_MS = 120000; // trava: a sirene nunca toca para sempre
-  var REENGATE_MS = 300000;        // silenciar sem atender: volta em 5 min
+  var REENGATE_MS = 60000;         // silenciar sem atender: volta em 1 min
   var INTERVALO_DOM_MS = 4000;
   var DURACAO_CARTAO_MS = 12000;   // quanto o cartao do Discreto fica na tela
   /* Discreto: se o paciente que disparou o alarme continuar na fila, o
-   * cartao e as duas batidas voltam a cada 2 min — mais curto que o
-   * reengate do Completo (5 min) porque o Discreto e pensado para lembrar
-   * com frequencia, sem interromper. Ver agendarRepiqueDeEsperaDiscreto(). */
-  var INTERVALO_REPIQUE_DISCRETO_MS = 2 * 60000;
+   * cartao e as duas batidas voltam a cada 1 min — o mesmo ritmo do
+   * reengate do Completo, mas o Discreto lembra sem interromper. Ver agendarRepiqueDeEsperaDiscreto(). */
+  var INTERVALO_REPIQUE_DISCRETO_MS = 60000;
+  /* espera do mais antigo a partir da qual o Discreto sobe um degrau (faixa + moldura) */
+  var DEGRAU_ESPERA_MS = 300000;
+  /* id da consulta -> ms de quando entrou na fila; so memoria, nunca disco */
+  var vistoDesde = {};
+
+  function esperaDoMaisAntigoMs() {
+    var menor = null;
+    Object.keys(vistoDesde).forEach(function (id) {
+      if (menor === null || vistoDesde[id] < menor) menor = vistoDesde[id];
+    });
+    return menor === null ? null : Date.now() - menor;
+  }
   /* A MESMA chegada chega por caminhos que nao chegam juntos: o toast, o
    * contador (lido de 4 em 4 s) e, na navegacao, a rede. Dentro desta
    * janela, um sinal que nao traz NENHUM paciente alem dos que ja foram
@@ -130,11 +146,14 @@
 
   var config = null;
   var shadow = null;
+  var convite = null;
   var elBotao = null;
   var elBanner = null;
+  var elBarraFila = null;
   var elMoldura = null;
   var elPainel = null;
   var elCartao = null;
+  var elAtualizacao = null;
 
   var audioCtx = null;
   var tocando = false;
@@ -151,6 +170,9 @@
   var idsVistos = null;           // null = ainda nao ha base
   var ultimoContador = null;
   var ultimoContadorEm = 0;       // quando ultimoContador foi lido pela ULTIMA vez
+  var ultimoLidoDom = null;       // o ultimo numero lido do cartao "Aguardando"
+  var ultimaMudancaDomEm = 0;     // quando esse numero mudou pela ultima vez
+  var ultimaLeituraRedeEm = 0;    // quando a rede (tela ou consulta) trouxe uma contagem
   var ultimoDisparo = 0;
   var chegadaEm = null;           // quando o alarme comecou a tocar
   var ultimaOrigem = null;        // cidade do ultimo paciente, so para o cartao Discreto
@@ -167,10 +189,9 @@
   var chegadasSemRede = 0;        // chegadas avisadas por toast/contador desde a ultima resposta da rede
   var motivoAtual = "chegada";    // "chegada" ou "ainda-aguardando": o que o aviso diz de si mesmo
 
-  /* 3x o intervalo de polling do DOM — mesmo raciocinio do Assistente
-   * Meeds (LIMITE_FRESCOR_DOM_MS): da folga para um ciclo perdido sem
-   * abrir mao de exigir leitura RECENTE. Ver evidenciaFrescaDoContador(). */
-  var LIMITE_FRESCOR_CONTADOR_MS = INTERVALO_DOM_MS * 3;
+  /* A consulta de 15 s e a fonte fresca fora do Pronto Atendimento: 40 s
+   * toleram uma consulta perdida. Ver evidenciaFrescaDoContador(). */
+  var LIMITE_FRESCOR_CONTADOR_MS = 40000;
 
   /* ---------------- preferencias ---------------- */
 
@@ -204,12 +225,20 @@
      * alarme desligado por ali continua desligado, so que agora atraves
      * da intensidade — sem perder a preferencia na troca de versao. */
     if (guardado.ativo === false) intensidadeGuardada = "silencioso";
+    /* Migracao do padrao de som (v1.6): quem ainda estava nos padroes
+     * antigos passa para o alerta de 3 notas, uma unica vez (padraoV);
+     * quem escolheu outro som, ou escolheu o antigo depois, fica como esta. */
+    var migrar = guardado.padraoV !== PADRAO_V;
+    if (migrar && guardado.som === "sirene-classica") somOk = false;
+    if (migrar && guardado.somCurto === "toque-duplo") curtoOk = false;
     config = {
+      padraoV: PADRAO_V,
       som: somOk ? guardado.som : PADRAO.som,
       somCurto: curtoOk ? guardado.somCurto : PADRAO.somCurto,
       volume: Math.min(100, Math.max(0, parseInt(guardado.volume, 10) || PADRAO.volume)),
       intensidade: intensidadeGuardada,
       janela: guardado.janela === true,
+      convite: guardado.convite === "visto" ? "visto" : PADRAO.convite,
     };
   }
 
@@ -282,6 +311,8 @@
       var min = Math.floor((Date.now() - chegadaEm) / 60000);
       if (min >= 1) partes.push("tocando há " + min + " min");
     }
+    var espera = esperaDoMaisAntigoMs();
+    if (espera !== null && espera >= 60000) partes.push("o mais antigo há " + Math.floor(espera / 60000) + " min");
     return partes.join(" · ") || "Novo paciente na fila";
   }
 
@@ -320,7 +351,7 @@
     if (origem !== "rede-queues-mine") chegadasSemRede++;
     console.debug("[Meeds B] chegada detectada por", origem);
     /* A cidade e lida NA HORA da chegada: e o unico momento em que se sabe
-     * qual selo pertence a quem acabou de entrar. Um repique 2 min depois
+     * qual selo pertence a quem acabou de entrar. Um repique 1 min depois
      * so reusa este valor — nao le a tela de novo (ver agendarRepiqueDe-
      * EsperaDiscreto). Se nao achar, o cartao mostra so a contagem. */
     ultimaOrigem = Fila.lerOrigemDoUltimoPaciente();
@@ -349,7 +380,7 @@
   }
 
   /* motivo: "chegada" (padrao) ou "ainda-aguardando" (repique do Discreto:
-   * o MESMO paciente de 2 min atras continua na fila, ninguem novo
+   * o MESMO paciente de 1 min atras continua na fila, ninguem novo
    * chegou). So muda o TITULO do cartao — o resto do disparo e identico. */
   function dispararAlarme(motivo) {
     if (tocando) return;
@@ -361,7 +392,9 @@
     /* Faixa e moldura so no modo completo. No discreto o aviso e o cartao
      * mais o som curto (duas vezes) mais a escada de atencao; no
      * silencioso, so a escada. */
-    if (modo.banner) {
+    var degrau = motivoAtual === "ainda-aguardando" && modo.som === "curto" &&
+      (esperaDoMaisAntigoMs() || 0) >= DEGRAU_ESPERA_MS;
+    if (modo.banner || degrau) {
       atualizarBanner();
       if (elBanner) elBanner.hidden = false;
       if (elMoldura) elMoldura.hidden = false;
@@ -394,7 +427,7 @@
        * senao o proximo paciente nao dispararia nada (o guard `tocando`
        * do topo barraria). Mas isto e o FIM NATURAL do toque, nao o medico
        * reconhecendo o alarme — por isso NAO passa por silenciarAlarme():
-       * ate a v1.4.0 passava, e ele cancelava o repique de 2 min que acabou
+       * ate a v1.4.0 passava, e ele cancelava o repique de 1 min que acabou
        * de ser agendado logo abaixo, 4 s depois (C3). Quem insiste no
        * Discreto e o repique. */
       timeoutLimite = setTimeout(fecharCicloCurto, 4000);
@@ -415,7 +448,7 @@
    * REPIQUE DE ESPERA — SO NO MODO DISCRETO
    * ------------------------------------------------------------------
    * UM SO TIMER, agendado a cada disparo do modo curto — nunca um por
-   * paciente. Cada vez que dispara, agenda a PROXIMA checagem em 2 min; na
+   * paciente. Cada vez que dispara, agenda a PROXIMA checagem em 1 min; na
    * hora de checar, confere de novo se ainda ha alguem esperando E se a
    * intensidade continua Discreto. Se qualquer uma das duas nao for mais
    * verdade, para sozinho — sem precisar de um botao "silenciar" que o
@@ -428,25 +461,28 @@
    * ------------------------------------------------------------------ */
   function agendarRepiqueDeEsperaDiscreto() {
     if (timeoutRepiqueDiscreto) return; // ja ha um repique agendado
-    timeoutRepiqueDiscreto = setTimeout(function () {
-      timeoutRepiqueDiscreto = null;
-      if (quantosAguardando() <= 0) return;           // paciente ja saiu da fila
-      if (config.intensidade !== "discreto") {        // medico trocou de modo:
-        armarLembreteDeEspera();                      // o lembrete passa ao ritmo do novo modo
-        return;
-      }
-      /* Mesma regra do reengate (D64): sem leitura FRESCA do contador, nao
-       * toca as cegas — reagenda em silencio, no mesmo ritmo, e decide
-       * quando o medico voltar a tela da fila. */
-      if (!evidenciaFrescaDoContador()) {
-        console.debug("[Meeds B] sem leitura fresca da fila — repique reagendado em silencio");
-        timeoutRepiqueDiscreto = null;
-        agendarRepiqueDeEsperaDiscreto();
-        return;
-      }
-      console.debug("[Meeds B] paciente ainda esperando, repique do modo discreto");
-      dispararAlarme("ainda-aguardando");
-    }, INTERVALO_REPIQUE_DISCRETO_MS);
+    timeoutRepiqueDiscreto = setTimeout(repicarEsperaDiscreto, INTERVALO_REPIQUE_DISCRETO_MS);
+  }
+
+  /* jaConsultou: chamado de volta pela consulta que este repique pediu */
+  function repicarEsperaDiscreto(jaConsultou) {
+    cancelarRepique(); // chamado de volta pela consulta, pode haver outro agendado no meio
+    if (quantosAguardando() <= 0) return;           // paciente ja saiu da fila
+    if (config.intensidade !== "discreto") {        // medico trocou de modo:
+      armarLembreteDeEspera();                      // o lembrete passa ao ritmo do novo modo
+      return;
+    }
+    /* Mesma regra do reengate (D64): sem leitura FRESCA do contador, nao
+     * toca as cegas — pede a consulta na hora e decide na resposta; se nao
+     * der para consultar (ou ela falhar), reagenda em silencio, no mesmo ritmo. */
+    if (!evidenciaFrescaDoContador()) {
+      if (jaConsultou !== true && consultarParaDecidir(function () { repicarEsperaDiscreto(true); })) return;
+      console.debug("[Meeds B] sem leitura fresca da fila — repique reagendado em silencio");
+      agendarRepiqueDeEsperaDiscreto();
+      return;
+    }
+    console.debug("[Meeds B] paciente ainda esperando, repique do modo discreto");
+    dispararAlarme("ainda-aguardando");
   }
 
   function pararSom() {
@@ -464,7 +500,7 @@
 
   /* Fim natural do toque curto (Discreto). Nao e uma acao do medico: nao
    * esconde o cartao (ele tem a duracao dele), nao fecha a janela de aviso,
-   * nao arma o lembrete de 5 min nem cancela o de 2. So devolve o estado. */
+   * nao arma o lembrete de 1 min nem cancela o repique. So devolve o estado. */
   function fecharCicloCurto() {
     pararSom();
     tocando = false;
@@ -479,7 +515,11 @@
     ultimoContador = 0;
     if (timeoutReengate) { clearTimeout(timeoutReengate); timeoutReengate = null; }
     cancelarRepique();
+    vistoDesde = {};
     if (tocando) silenciarAlarme();
+    /* o degrau do Discreto deixa a faixa acesa depois do ciclo curto */
+    if (elBanner) elBanner.hidden = true;
+    if (elMoldura) elMoldura.hidden = true;
     marcarAtencao(false); // com 0, limpa titulo, favicone e janela
   }
 
@@ -505,10 +545,12 @@
     if (!baseAssentada) {
       baseAssentada = true;
       alertados = n;                       // quem ja estava la nao e "chegada"
-      if (n > 0) armarLembreteDeEspera();
     } else if (n < alertados) {
       alertados = n;                       // alguem saiu: o proximo a chegar conta
     }
+    /* Toda leitura com gente esperando garante a corrente de lembretes (idempotente):
+     * so na base, um esqueleto "0" ou um desconto errado a matavam para sempre. */
+    if (n > 0) armarLembreteDeEspera();
     if (n === 0) aoFilaVazia();
   }
 
@@ -527,10 +569,54 @@
       var rotulo = Fila.normalizar(botao.textContent);
       if (rotulo !== Fila.ROTULO_ATENDER && rotulo.indexOf(Fila.ROTULO_ATENDER + " ") !== 0) return;
       if (Fila.lerContadorAguardando() === null) return; // nao e a tela da fila
+      if (atendimentoRecente()) return; // o claim da rede ja descontou este
+      ultimoAtendimento = { em: Date.now(), id: null, clique: true };
       aoMedicoAtender();
     } catch (e) {
       /* silencioso: este sinal e reforco, nunca pode quebrar a pagina */
     }
+  }
+
+  /* Clique e claim da rede descrevem o MESMO atendimento: o segundo, dentro
+   * de 3 s, nao desconta outro paciente. */
+  var JANELA_DO_ATENDIMENTO_MS = 3000;
+  var ultimoAtendimento = null; // { em, id (so em memoria), clique }
+  function atendimentoRecente() {
+    return !!ultimoAtendimento && Date.now() - ultimoAtendimento.em <= JANELA_DO_ATENDIMENTO_MS;
+  }
+
+  /* Resposta do claim ("Atender"): 2xx = e meu; 4xx = outro medico puxou. */
+  function aoResponderClaim(url, status) {
+    try {
+      if (status >= 200 && status < 300) {
+        esconderBarraDaFila(); // o medico vai entrar na consulta: a barra nao pode ficar la
+        var m = /\/consultations\/([^\/?]+)\/claim/.exec(String(url));
+        var id = m ? m[1] : null;
+        if (atendimentoRecente() && (ultimoAtendimento.clique || ultimoAtendimento.id === id)) {
+          ultimoAtendimento = { em: ultimoAtendimento.em, id: id, clique: false };
+          return;
+        }
+        /* as mesmas guardas do clique: so desconta quem esta na fila, na tela da fila */
+        if (!idsVistos || !idsVistos[id]) return;
+        if (Fila.lerContadorAguardando() === null) return;
+        ultimoAtendimento = { em: Date.now(), id: id, clique: false };
+        aoMedicoAtender();
+      } else if (status >= 400 && status < 500) {
+        mostrarBarraDaFila("Outro médico já atendeu este paciente.");
+      }
+    } catch (e) {
+      /* silencioso: este sinal e reforco, nunca pode quebrar a pagina */
+    }
+  }
+
+  function mostrarBarraDaFila(texto) {
+    if (!elBarraFila) return;
+    shadow.getElementById("mb-fila-mudou-texto").textContent = texto;
+    elBarraFila.hidden = false;
+  }
+
+  function esconderBarraDaFila() {
+    if (elBarraFila) elBarraFila.hidden = true;
   }
 
   function aoMedicoAtender() {
@@ -563,7 +649,7 @@
     marcarAtencao(false);
   }
 
-  /* Volta em 5 min, se ainda houver quem esperar nessa hora. */
+  /* Volta em 1 min, se ainda houver quem esperar nessa hora. */
   function armarReengate() {
     if (timeoutReengate) { clearTimeout(timeoutReengate); timeoutReengate = null; }
     if (quantosAguardando() <= 0) return;
@@ -580,18 +666,23 @@
 
   /* Sem leitura fresca do contador (medico fora da tela da fila havera
    * mais de LIMITE_FRESCOR_CONTADOR_MS): nao toca as cegas em cima de um
-   * numero que pode ter ficado parado ha minutos. Tambem nao desiste —
+   * numero que pode ter ficado parado ha minutos. Primeiro pede a consulta
+   * na hora (consultarParaDecidir) e decide na resposta. Sem consulta
+   * possivel, ou se ela falhar, nao desiste —
    * tenta de novo mais tarde, na MESMA cadencia, ate uma leitura fresca
    * aparecer (o medico volta a tela, ou so o proximo poll de 4s pega o
    * contador visivel de novo). A corrente so morre quando ha PROVA fresca
    * de fila vazia; ate la, ela so para de SOAR sem prova.
    *
-   * Vale para TODO lembrete que soa sozinho: o reengate de 5 min, o lembrete
+   * Vale para TODO lembrete que soa sozinho: o reengate de 1 min, o lembrete
    * de quem ja esperava quando o alarme ligou, e (via
-   * repiqueDeEsperaDiscreto) o repique de 2 min do Discreto. */
-  function tentarReengatarAlarme() {
+   * repiqueDeEsperaDiscreto) o repique de 1 min do Discreto. */
+  function tentarReengatarAlarme(jaConsultou) {
+    if (timeoutReengate) clearTimeout(timeoutReengate); // chamado de volta pela consulta, pode haver outro agendado no meio
     timeoutReengate = null;
     if (!evidenciaFrescaDoContador()) {
+      /* antes de reagendar: a consulta na hora resolve a duvida (I4) */
+      if (jaConsultou !== true && consultarParaDecidir(function () { tentarReengatarAlarme(true); })) return;
       console.debug("[Meeds B] sem leitura fresca da fila apos silenciar — reagendando em silencio, sem tocar");
       timeoutReengate = setTimeout(tentarReengatarAlarme, REENGATE_MS);
       return;
@@ -681,7 +772,21 @@
      * e tambem nada a DESdizer. O ultimo numero fica, e a IDADE dele
      * (ultimoContadorEm) e o que qualquer lembrete consulta antes de soar
      * (evidenciaFrescaDoContador). */
-    if (n === null) return;
+    if (n === null) {
+      esconderBarraDaFila(); // saiu do PA (ex.: entrou na consulta): a barra nao serve la
+      return;
+    }
+
+    /* A tela NAO se atualiza sozinha: um numero que nao mudou desde a
+     * leitura anterior do DOM nao e evidencia nova. Se a rede leu depois da
+     * ultima mudanca do DOM, a rede vale e o numero parado e ignorado —
+     * senao a consulta dizia 0 e o contador parado em 1 virava "chegada"
+     * a cada 15 s, para sempre (C1). Uma chegada nova aparece como MUDANCA
+     * do contador, ou pelo toast. */
+    var mudou = n !== ultimoLidoDom;
+    ultimoLidoDom = n;
+    if (mudou) ultimaMudancaDomEm = Date.now();
+    else if (ultimaLeituraRedeEm > ultimaMudancaDomEm) return;
 
     /* Um "0" logo depois de uma chegada que o contador AINDA NAO mostrava
      * (o toast ou a rede chegaram antes de a tela renderizar) e atraso de
@@ -704,7 +809,9 @@
     if (n > 0) marcarAtencao(false);
   }
 
-  function aoResponderFila(json) {
+  /* origem: "tela" (o gancho viu a tela buscar) ou "consulta" (a nossa) */
+  function aoResponderFila(json, origem) {
+    if (origem === "tela") respostasDaTela++;
     var ids;
     try {
       ids = Fila.idsDeFolhas(json);
@@ -718,6 +825,16 @@
       total = null;
     }
 
+    /* so formato reconhecido mexe na espera: "nao sei" nao apaga ninguem */
+    if (total !== null) {
+      var agoraMs = Date.now();
+      var vistoAgora = {};
+      Fila.chegadasDaFila(json).forEach(function (c) {
+        vistoAgora[c.id] = vistoDesde[c.id] || (c.chegadaMs !== null ? c.chegadaMs : agoraMs);
+      });
+      vistoDesde = vistoAgora;
+    }
+
     var tinhaBase = idsVistos !== null;
     var atual = {};
     var novos = 0;
@@ -725,7 +842,16 @@
       atual[ids[i]] = true;
       if (tinhaBase && !idsVistos[ids[i]]) novos++;
     }
+    var saiuAlguem = false;
+    if (tinhaBase) for (var k in idsVistos) if (!atual[k]) saiuAlguem = true;
     idsVistos = atual;
+
+    /* A tela da fila acabou de ser atualizada; fora dela (consulta propria)
+     * o medico ve a lista velha, entao avisamos — sem clicar por ele. */
+    if (origem === "tela") esconderBarraDaFila();
+    else if (origem === "consulta" && saiuAlguem && Fila.lerContadorAguardando() !== null) {
+      mostrarBarraDaFila("A fila mudou — outro médico pode ter atendido.");
+    }
 
     /* Chegadas que o toast ou o contador JA avisaram desde a ultima
      * resposta. Sem este desconto, o clique no menu — que busca a fila e
@@ -738,6 +864,7 @@
     /* A rede sabe QUANTOS, em qualquer tela. E a unica fonte que ve a fila
      * vazia quando o contador nao esta na tela (C1). */
     if (total !== null) {
+      ultimaLeituraRedeEm = Date.now();
       registrarLeitura(total);
       /* A primeira resposta tambem so assenta a base: se o DOM leu "0" de
        * um esqueleto antes de os dados chegarem, quem ja esperava nao pode
@@ -753,23 +880,157 @@
   /* ------------------------------------------------------------------
    * ESCUTA DE REDE
    * ------------------------------------------------------------------
-   * So LEITURA do que a propria tela ja pediu: o gancho copia a resposta
-   * e devolve a original intacta. Nenhuma requisicao e criada por nos,
-   * nenhum dado de outro profissional e consultado — /queues/mine e, por
-   * definicao, a fila do medico logado.
+   * O gancho so LE o que a propria tela ja pediu: copia a resposta e
+   * devolve a original intacta. Da chamada da tela ele anota tambem o
+   * endereco e os cabecalhos (o token), so em memoria, para a NOSSA
+   * consulta — um GET de leitura a cada 15 s no mesmo /queues/mine, que
+   * e por definicao a fila do medico logado. Nenhum outro dado e pedido.
    * ------------------------------------------------------------------ */
+  var INTERVALO_CONSULTA_MS = 15000;
+  /* o clique no sino so consulta a versao publicada a cada 30 min (em memoria) */
+  var INTERVALO_VERIFICAR_ATUALIZACAO_MS = 30 * 60000;
+  var ultimaVerificacaoEm = null;
+  /* menor que o frescor (40 s): um erro so nao pode calar o lembrete seguinte */
+  var ESPERA_APOS_ERRO_MS = 30000;
+  /* rede presa (Wi-Fi trocando, notebook acordando) nunca termina sozinha */
+  var PRAZO_DA_CONSULTA_MS = 10000;
+  var fetchOriginal = null;
+  var urlDaFila = null;           // absoluta, da ultima chamada da tela
+  var cabecalhosDaFila = null;    // nome -> valor, da ultima chamada da tela; nunca vai a disco
+  /* o modo de credenciais que a tela usou: a chamada dela prova que o CORS da API aceita */
+  var credenciaisDaFila = "same-origin";
+  var consultaSuspensa = false;   // 401/403: espera a tela buscar de novo (token novo)
+  var consultaEmAndamento = false;
+  var timerConsulta = null;
+  var respostasDaTela = 0;        // so para teste: quantas respostas vieram pelo gancho
+  var aoTerminarConsulta = null;  // um lembrete esperando a consulta que ele pediu
+
+  /* Headers, array de pares ou objeto simples -> objeto simples */
+  function copiarCabecalhos(h) {
+    var saida = {};
+    if (!h) return saida;
+    if (Array.isArray(h)) {
+      h.forEach(function (par) { saida[par[0]] = String(par[1]); });
+    } else if (typeof h.forEach === "function") {
+      h.forEach(function (valor, nome) { saida[nome] = valor; });
+    } else {
+      Object.keys(h).forEach(function (nome) { saida[nome] = String(h[nome]); });
+    }
+    return saida;
+  }
+
+  /* A tela acabou de buscar a fila: e o endereco e o token mais novos.
+   * A consulta so comeca depois da primeira chamada da tela: antes dela
+   * nao se sabe o host da API nem o cabecalho de autenticacao. */
+  function anotarChamadaDaTela(url, cabecalhos, credenciais) {
+    var primeira = urlDaFila === null;
+    try {
+      urlDaFila = new URL(url, location.href).href;
+    } catch (e) {
+      return; // sem endereco confiavel, nao ha o que consultar
+    }
+    /* Uma chamada sem token (ou um XHR que o app abra sem cabecalho) nao
+     * pode apagar o token que ja temos: a consulta seguinte levaria 401. */
+    if (cabecalhosDaFila === null || temAutorizacao(cabecalhos)) cabecalhosDaFila = cabecalhos;
+    credenciaisDaFila = credenciais || "same-origin";
+    if (primeira || consultaSuspensa) {
+      consultaSuspensa = false;
+      refletirEstado();
+      agendarConsulta(INTERVALO_CONSULTA_MS);
+    }
+  }
+
+  function temAutorizacao(cabecalhos) {
+    return Object.keys(cabecalhos || {}).some(function (nome) { return nome.toLowerCase() === "authorization"; });
+  }
+
+  /* Um lembrete na hora, com a leitura velha: consulta AGORA e decide na
+   * resposta (I4). false = nao da para consultar (sem endereco/token
+   * capturado, ou suspensa por 401/403) — o lembrete reagenda em silencio. */
+  function consultarParaDecidir(decidir) {
+    if (!urlDaFila || consultaSuspensa || typeof fetchOriginal !== "function") return false;
+    aoTerminarConsulta = decidir;
+    if (!consultaEmAndamento) consultarFilaAgora(); // em andamento: o fim dela chama decidir
+    return true;
+  }
+
+  /* Um timer so: reagendar substitui o anterior, nunca empilha. */
+  function agendarConsulta(ms) {
+    if (typeof fetchOriginal !== "function") return;
+    if (timerConsulta) clearTimeout(timerConsulta);
+    timerConsulta = setTimeout(consultarFilaAgora, ms);
+  }
+
+  function consultarFilaAgora() {
+    if (timerConsulta) clearTimeout(timerConsulta); // pedida por um lembrete, fora do ritmo
+    timerConsulta = null;
+    if (!urlDaFila) return;
+    if (consultaEmAndamento || consultaSuspensa) return agendarConsulta(INTERVALO_CONSULTA_MS);
+    consultaEmAndamento = true;
+    var controle = typeof raiz.AbortController === "function" ? new raiz.AbortController() : null;
+    var prazo = controle ? setTimeout(function () { controle.abort(); }, PRAZO_DA_CONSULTA_MS) : null;
+    /* o fim de toda consulta, com ou sem sucesso: libera a proxima e chama o lembrete que esperava */
+    function terminar(proxima) {
+      if (!consultaEmAndamento) return; // abort tardio depois do fim: ja terminou
+      consultaEmAndamento = false;
+      if (prazo) clearTimeout(prazo);
+      if (proxima) agendarConsulta(proxima);
+      var decidir = aoTerminarConsulta;
+      aoTerminarConsulta = null;
+      if (decidir) decidir();
+    }
+    function falhou() { terminar(ESPERA_APOS_ERRO_MS); }
+    try {
+      /* fetchOriginal, nunca raiz.fetch: a nossa consulta nao passa pelo gancho */
+      fetchOriginal
+        .call(raiz, urlDaFila, {
+          method: "GET",
+          credentials: credenciaisDaFila,
+          cache: "no-store",
+          headers: cabecalhosDaFila || {},
+          signal: controle ? controle.signal : undefined,
+        })
+        .then(function (resposta) {
+          if (resposta.status === 401 || resposta.status === 403) {
+            consultaSuspensa = true; // sem reagendar: a proxima busca da tela retoma
+            refletirEstado();
+            return terminar(null);
+          }
+          if (!resposta.ok) return falhou();
+          return resposta.json().then(function (json) {
+            aoResponderFila(json, "consulta");
+            terminar(INTERVALO_CONSULTA_MS);
+          });
+        })
+        .catch(falhou);
+    } catch (e) {
+      falhou();
+    }
+  }
+
   function instalarEscutaDeRede() {
-    var fetchOriginal = raiz.fetch;
+    fetchOriginal = raiz.fetch;
     if (typeof fetchOriginal === "function") {
       raiz.fetch = function (entrada, opcoes) {
         var url = typeof entrada === "string" ? entrada : (entrada && entrada.url) || "";
         var promessa = fetchOriginal.apply(this, arguments);
+        var metodoDoPedido = (opcoes && opcoes.method) || (entrada && typeof entrada !== "string" && entrada.method);
+        if (Fila.ehChamadaDeClaim(url, metodoDoPedido)) {
+          promessa.then(function (resposta) { aoResponderClaim(url, resposta.status); }).catch(function () {});
+        }
         if (Fila.ehChamadaDaFila(url)) {
+          try {
+            var pedido = typeof entrada !== "string" && entrada ? entrada : {};
+            anotarChamadaDaTela(url, copiarCabecalhos((opcoes && opcoes.headers) || pedido.headers),
+              (opcoes && opcoes.credentials) || pedido.credentials);
+          } catch (e) {
+            /* silencioso: anotar e reforco, nunca pode quebrar a pagina */
+          }
           promessa
             .then(function (resposta) {
               /* clone(): ler o corpo consome o stream, e consumir o
                * original deixaria a tela sem os dados dela. */
-              resposta.clone().json().then(aoResponderFila).catch(function () {});
+              resposta.clone().json().then(function (json) { aoResponderFila(json, "tela"); }).catch(function () {});
               return resposta;
             })
             .catch(function () {});
@@ -782,12 +1043,29 @@
     if (abrirOriginal) {
       raiz.XMLHttpRequest.prototype.open = function (metodo, url) {
         this.__meedsBUrl = url;
+        this.__meedsBMetodo = metodo;
         return abrirOriginal.apply(this, arguments);
       };
+      var cabecalhoOriginal = raiz.XMLHttpRequest.prototype.setRequestHeader;
+      if (cabecalhoOriginal) {
+        raiz.XMLHttpRequest.prototype.setRequestHeader = function (nome, valor) {
+          (this.__meedsBCabecalhos = this.__meedsBCabecalhos || {})[nome] = String(valor);
+          return cabecalhoOriginal.apply(this, arguments);
+        };
+      }
       var enviarOriginal = raiz.XMLHttpRequest.prototype.send;
       raiz.XMLHttpRequest.prototype.send = function () {
         var xhr = this;
+        if (Fila.ehChamadaDeClaim(xhr.__meedsBUrl, xhr.__meedsBMetodo)) {
+          xhr.addEventListener("load", function () { aoResponderClaim(xhr.__meedsBUrl, xhr.status); });
+        }
         if (Fila.ehChamadaDaFila(xhr.__meedsBUrl)) {
+          try {
+            anotarChamadaDaTela(xhr.__meedsBUrl, xhr.__meedsBCabecalhos || {},
+              xhr.withCredentials ? "include" : "same-origin");
+          } catch (e) {
+            /* silencioso: anotar e reforco, nunca pode quebrar a pagina */
+          }
           xhr.addEventListener("load", function () {
             try {
               if (xhr.status !== 200) return;
@@ -796,7 +1074,7 @@
                * `response`. Ler so responseText fazia este sinal morrer em
                * silencio num app que configure o XHR assim. */
               var corpo = xhr.responseType === "json" ? xhr.response : JSON.parse(xhr.responseText);
-              aoResponderFila(corpo);
+              aoResponderFila(corpo, "tela");
             } catch (e) {
               /* silencioso */
             }
@@ -811,14 +1089,31 @@
 
   var CSS = [
     ":host { all: initial; }",
+    Visual.CSS,
+    Convite.CSS,
+    /* acima do sino, embaixo a direita; abaixo do painel (z-index) para ele cobrir o cartao, nunca o contrario */
+    "#mb-atualizacao {",
+    "  position: fixed; right: 20px; bottom: 90px; z-index: 2147483001; width: 320px; max-width: calc(100vw - 40px);",
+    "  background: #fff; color: #1f2a37; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,.3);",
+    "  font: 400 13.5px/1.5 system-ui, sans-serif; overflow: hidden;",
+    "}",
+    "#mb-atualizacao[hidden] { display: none; }",
+    "#mb-atualizacao p { margin: 0; padding: 14px 18px 4px; }",
+    "#mb-atualizacao .mb-atu-botoes { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 18px 16px; }",
+    "#mb-atualizacao button.mb-atu-bt {",
+    "  border: none; border-radius: 10px; padding: 9px 14px; font: 600 13px system-ui, sans-serif;",
+    "  cursor: pointer; background: #f1f3f5; color: #1f2a37;",
+    "}",
+    "#mb-atualizacao button.mb-atu-bt.principal { background: #0b7285; color: #fff; }",
+    "#mb-atualizacao button.mb-atu-bt:focus-visible { outline: 2px solid #0b7285; outline-offset: 2px; }",
     "#mb-botao {",
     "  position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;",
     "  width: 52px; height: 52px; border-radius: 50%; border: none; cursor: pointer;",
-    "  font-size: 22px; line-height: 1; color: #fff; font-family: system-ui, sans-serif;",
+    "  padding: 0; background: #fff; display: flex; align-items: center; justify-content: center;",
     "  box-shadow: 0 6px 20px rgba(0,0,0,.28);",
     "}",
-    "#mb-botao.ligado { background: linear-gradient(135deg,#0ea5a4,#0f766e); }",
-    "#mb-botao.desligado { background: #64748b; }",
+    "#mb-botao svg { width: 30px; height: 30px; display: block; }",
+    "#mb-botao.desligado { background: #f1f3f5; }",
     /* Caminho visivel para os ajustes — sem ela, so clique direito ou
        shift+clique abrem o painel, e ninguem descobre isso sozinho. */
     "#mb-config {",
@@ -828,6 +1123,7 @@
     "  background: rgba(15,23,42,.55); box-shadow: 0 4px 14px rgba(0,0,0,.22);",
     "}",
     "#mb-config:hover { background: rgba(15,23,42,.78); }",
+    "#mb-botao:focus-visible, #mb-config:focus-visible { outline: 2px solid #0b7285; outline-offset: 2px; }",
     "#mb-banner {",
     "  position: fixed; top: 0; left: 0; right: 0; z-index: 2147483001;",
     "  display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap;",
@@ -835,7 +1131,17 @@
     "  background: linear-gradient(90deg,#dc2626,#f97316,#dc2626); background-size: 200% 100%;",
     "  animation: mb-desliza 1.1s linear infinite;",
     "}",
-    "#mb-banner[hidden], #mb-moldura[hidden], #mb-painel[hidden] { display: none; }",
+    "#mb-banner[hidden], #mb-moldura[hidden], #mb-painel[hidden], #mb-fila-mudou[hidden] { display: none; }",
+    "#mb-fila-mudou {",
+    /* embaixo e a esquerda: o topo e do banner do alarme (com o "Silenciar"), e o canto direito do sino e da engrenagem */
+    "  position: fixed; bottom: 20px; left: 20px; max-width: calc(100vw - 170px); z-index: 2147483001;",
+    "  display: flex; align-items: center; gap: 14px; flex-wrap: wrap; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.3);",
+    "  padding: 10px 16px; color: #fff; font: 600 15px system-ui, sans-serif; background: #1e40af;",
+    "}",
+    "#mb-fila-mudou button {",
+    "  background: rgba(255,255,255,.2); border: 1.5px solid rgba(255,255,255,.75); color: #fff;",
+    "  padding: 6px 14px; border-radius: 8px; font: 700 14px system-ui, sans-serif; cursor: pointer;",
+    "}",
     "@keyframes mb-desliza { from { background-position: 0 0; } to { background-position: 200% 0; } }",
     "#mb-motivo { font-weight: 500; font-size: 14px; opacity: .95; }",
     "#mb-banner button {",
@@ -856,10 +1162,10 @@
     "@media (prefers-reduced-motion: reduce) { #mb-banner, #mb-moldura { animation: none !important; } }",
     "#mb-painel {",
     "  position: fixed; right: 20px; bottom: 84px; z-index: 2147483002; width: 320px;",
-    "  background: #fff; color: #16221f; border-radius: 14px; padding: 16px 18px 18px;",
+    "  background: #fff; color: #16221f; border-radius: 20px; padding: 0 18px 18px;",
     "  box-shadow: 0 20px 60px rgba(0,0,0,.3); font: 400 13px system-ui, sans-serif;",
     "}",
-    "#mb-painel h2 { margin: 0 0 12px; font-size: 15px; }",
+    "#mb-painel .msc-head { margin: 0 -18px 4px; }",
     "#mb-painel label { display: block; font-size: 12px; font-weight: 600; color: #334155; margin: 12px 0 5px; }",
     "#mb-painel select, #mb-painel input[type=range] { width: 100%; box-sizing: border-box; }",
     "#mb-painel label.mb-linha { display:flex; align-items:center; gap:8px; font-weight:600; color:#1e293b; margin:12px 0 4px; cursor:pointer; }",
@@ -907,14 +1213,18 @@
       '  <span id="mb-motivo"></span>' +
       '  <button type="button" id="mb-silenciar">Silenciar alarme</button>' +
       "</div>" +
-      '<button type="button" id="mb-botao" title="Alarme de fila"></button>' +
+      '<div id="mb-fila-mudou" hidden>' +
+      '  <span id="mb-fila-mudou-texto"></span>' +
+      '  <button type="button" id="mb-atualizar-fila">Atualizar fila</button>' +
+      "</div>" +
+      '<button type="button" id="mb-botao" title="Alarme de fila" aria-label="Alarme de fila"></button>' +
       /* Sino sozinho so cicla intensidade (clique) ou abre os ajustes por
        * um gesto escondido (botao direito / shift+clique) — sem um jeito
        * visivel, quem nao conhece o gesto acha que "clicar nao funciona".
        * A engrenagem e so isso: um caminho obvio para a mesma tela. */
-      '<button type="button" id="mb-config" title="Configurar Alarme de fila">⚙️</button>' +
+      '<button type="button" id="mb-config" title="Configurar Alarme de fila" aria-label="Configurar Alarme de fila">⚙️</button>' +
       '<div id="mb-painel" hidden>' +
-      "  <h2>Alarme de fila</h2>" +
+      '  <div id="mb-cabecalho"></div>' +
       '  <label for="mb-intensidade">Quanto ele deve incomodar</label>' +
       '  <select id="mb-intensidade">' +
       '    <option value="completo">🔔 Completo</option>' +
@@ -929,9 +1239,12 @@
       '    <input type="checkbox" id="mb-janela" /> Abrir uma janela de aviso' +
       "  </label>" +
       '  <div class="mb-dica" id="mb-janela-dica"></div>' +
+      '  <button type="button" class="acao" id="mb-convite-abrir">Configurar avisos fora da aba</button>' +
       '  <div id="mb-estado"></div>' +
       '  <button type="button" class="acao" id="mb-liberar" hidden>Ativar avisos do sistema</button>' +
       "</div>" +
+      '<div id="mb-convite" role="dialog" aria-labelledby="mb-convite-titulo" hidden></div>' +
+      '<div id="mb-atualizacao" role="dialog" aria-labelledby="mb-atualizacao-titulo" hidden></div>' +
       '<div id="mb-cartao" hidden>' +
       '  <div id="mb-cartao-titulo"></div>' +
       '  <div id="mb-cartao-corpo"></div>' +
@@ -940,8 +1253,25 @@
     elMoldura = shadow.getElementById("mb-moldura");
     elBanner = shadow.getElementById("mb-banner");
     elBotao = shadow.getElementById("mb-botao");
+    elBarraFila = shadow.getElementById("mb-fila-mudou");
+    shadow.getElementById("mb-atualizar-fila").addEventListener("click", function () {
+      /* Nunca recarrega a pagina: no meio de um atendimento isso perderia o
+       * que o medico digitou. Sem o menu, a barra so some. */
+      esconderBarraDaFila();
+      Fila.clicarMenuProntoAtendimento();
+    });
     elPainel = shadow.getElementById("mb-painel");
+    desenharCabecalho();
     elCartao = shadow.getElementById("mb-cartao");
+    elAtualizacao = shadow.getElementById("mb-atualizacao");
+    elAtualizacao.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") fecharAtualizacao();
+    });
+    convite = Convite.criar({ shadow: shadow, Atencao: Atencao, aoConcluir: aoConcluirConvite });
+    shadow.getElementById("mb-convite-abrir").addEventListener("click", function () {
+      elPainel.hidden = true;
+      convite.abrir();
+    });
     var elConfig = shadow.getElementById("mb-config");
 
     var sel = shadow.getElementById("mb-som");
@@ -955,6 +1285,7 @@
       /* Aproveita o gesto para destravar o audio: o navegador so deixa
        * tocar som depois de uma interacao do usuario. */
       contexto();
+      verificarAtualizacao();
       var i = ORDEM_INTENSIDADE.indexOf(config.intensidade);
       config.intensidade = ORDEM_INTENSIDADE[(i + 1) % ORDEM_INTENSIDADE.length];
       if (config.intensidade === "silencioso" && tocando) silenciarAlarme();
@@ -1032,6 +1363,71 @@
     });
 
     refletir();
+    /* O convite espera 3 s: o medico acabou de abrir a pagina e o painel de
+     * avisos nao pode competir com ela. No silencioso nao convida: quem
+     * escolheu nao ser avisado nao quer pergunta sobre avisos. */
+    setTimeout(function () {
+      if (config.convite === "pendente" && config.intensidade !== "silencioso") convite.abrir();
+    }, 3000);
+  }
+
+  /* Grava o que o convite decidiu; `janela` so vem quando ele decidiu sobre ela. */
+  function aoConcluirConvite(r) {
+    if (typeof r.janela === "boolean") config.janela = r.janela;
+    if (r.visto) config.convite = "visto";
+    gravar();
+    refletirJanela();
+  }
+
+  /* O subtitulo diz a intensidade atual, entao o cabecalho e redesenhado
+   * a cada refletir() — e o X precisa ser ligado de novo a cada vez. */
+  function desenharCabecalho() {
+    var el = shadow && shadow.getElementById("mb-cabecalho");
+    if (!el) return;
+    el.innerHTML = Visual.cabecalho({
+      titulo: "Alarme de fila",
+      subtitulo: "Modo " + intensidadeAtual().rotulo.toLowerCase(),
+      idFechar: "mb-fechar",
+    });
+    shadow.getElementById("mb-fechar").addEventListener("click", function () {
+      elPainel.hidden = true;
+    });
+  }
+
+  function fecharAtualizacao() {
+    elAtualizacao.hidden = true;
+    elAtualizacao.innerHTML = "";
+  }
+
+  function mostrarAtualizacao(nova, atual, instalar) {
+    elAtualizacao.innerHTML =
+      Visual.cabecalho({ titulo: "Nova versão do alarme", idFechar: "mb-atualizacao-fechar" })
+        .replace("<h2>", '<h2 id="mb-atualizacao-titulo">') +
+      "<p>A versão " + nova + " está disponível (você usa a " + atual + ").</p>" +
+      '<div class="mb-atu-botoes">' +
+      '<button type="button" class="mb-atu-bt principal" id="mb-atualizar">Atualizar agora</button>' +
+      '<button type="button" class="mb-atu-bt" id="mb-atualizacao-depois">Depois</button></div>';
+    elAtualizacao.hidden = false;
+    shadow.getElementById("mb-atualizacao-fechar").addEventListener("click", fecharAtualizacao);
+    shadow.getElementById("mb-atualizacao-depois").addEventListener("click", fecharAtualizacao);
+    shadow.getElementById("mb-atualizar").addEventListener("click", function () {
+      raiz.open(instalar, "_blank"); // o Tampermonkey/Userscripts mostra a tela de atualizacao
+      fecharAtualizacao();
+    });
+    var foco = shadow.getElementById("mb-atualizar");
+    if (foco && foco.focus) foco.focus();
+  }
+
+  /* No clique do sino, no maximo a cada 30 min; sem versao nova nada aparece. */
+  function verificarAtualizacao() {
+    if (!Atualizacao || !raiz.MeedsBVersao) return;
+    var agora = Date.now();
+    if (ultimaVerificacaoEm !== null && agora - ultimaVerificacaoEm < INTERVALO_VERIFICAR_ATUALIZACAO_MS) return;
+    ultimaVerificacaoEm = agora;
+    var variante = typeof GM_getValue === "function" ? "tampermonkey" : "safari";
+    Atualizacao.verificar(raiz.MeedsBVersao, variante, function (r) {
+      if (r.nova) mostrarAtualizacao(r.versao, raiz.MeedsBVersao, r.instalar);
+    });
   }
 
   function abrirPainel() {
@@ -1054,13 +1450,15 @@
   function refletir() {
     if (!elBotao) return;
     var modo = intensidadeAtual();
-    elBotao.textContent = modo.icone;
+    elBotao.innerHTML = Visual.sino(config.intensidade);
+    elBotao.setAttribute("aria-label", "Alarme de fila: modo " + modo.rotulo.toLowerCase());
     elBotao.className = config.intensidade === "silencioso" ? "desligado" : "ligado";
     elBotao.title =
       "Alarme: " + modo.rotulo + " — " + modo.resumo +
       " Clique para trocar de intensidade, ⚙️ ao lado para configurar.";
 
     if (shadow) {
+      desenharCabecalho();
       var curto = modo.som === "curto";
       preencherSons(curto);
       var sel = shadow.getElementById("mb-som");
@@ -1148,7 +1546,7 @@
     if (permissao === "granted") {
       estado.textContent =
         "Avisos do sistema ligados. Aparecem com o navegador minimizado; clicar traz a aba " +
-        "para frente e silencia — se você não atender, o alarme volta em 5 minutos.";
+        "para frente e silencia — se você não atender, o alarme volta em 1 minuto.";
     } else if (permissao === "denied") {
       estado.textContent =
         "As notificações estão bloqueadas para este site. Libere no cadeado da barra de " +
@@ -1164,13 +1562,17 @@
     if (Atencao && Atencao.suportaTelaAcesa()) {
       estado.textContent += " A tela não apaga enquanto esta aba estiver aberta.";
     }
+    if (consultaSuspensa) {
+      estado.textContent = "A consulta automática da fila parou (sessão expirada?). " +
+        "Abra o Pronto atendimento para retomar. " + estado.textContent;
+    }
   }
 
   /* ---------------- ligar tudo ---------------- */
 
   function iniciar() {
     carregarConfig();
-    instalarEscutaDeRede();
+    instalarEscutaDeRede(); // a consulta propria comeca na primeira busca da fila pela tela
 
     function quandoTiverCorpo() {
       if (!document.body) return setTimeout(quandoTiverCorpo, 200);
@@ -1218,13 +1620,16 @@
     iniciar: iniciar,
     /* expostos para teste */
     _sinalizarChegada: function (o) { sinalizarChegada(o); },
-    _aoResponderFila: function (j) { aoResponderFila(j); },
+    _aoResponderFila: function (j, origem) { aoResponderFila(j, origem); },
+    _passoDoConvite: function () { return convite ? convite.passo() : null; },
     _estado: function () {
       return {
         tocando: tocando,
         aguardando: quantosAguardando(),
         alertados: alertados,
         intensidade: config && config.intensidade,
+        config: config,
+        respostasDaTela: respostasDaTela,
       };
     },
     /* Exposto para o teste de reengate (o mesmo defeito da D64 do

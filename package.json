@@ -1,15 +1,17 @@
 {
   "name": "meeds-b",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "description": "Alarme de fila para o Meeds Doctor (doctor.calltechsaude.com.br). Avisa o medico quando entra paciente no Pronto Atendimento, inclusive com a aba de fundo ou o navegador minimizado.",
   "scripts": {
     "build": "node scripts/build.js",
-    "verificar": "node scripts/build.js --check && node tests/atencao.test.js && node tests/fila.test.js && node tests/som.test.js && node tests/alarme-reengate.test.js && node tests/alarme.test.js && node tests/alarme-sinais.test.js",
+    "verificar": "node scripts/build.js --check && node tests/atencao.test.js && node tests/fila.test.js && node tests/som.test.js && node tests/visual.test.js && node tests/convite.test.js && node tests/atualizacao.test.js && node tests/alarme-reengate.test.js && node tests/alarme.test.js && node tests/alarme-sinais.test.js && node tests/alarme-consulta.test.js",
     "teste-atencao": "node tests/atencao.test.js",
     "teste-fila": "node tests/fila.test.js",
     "teste-som": "node tests/som.test.js",
-    "teste-alarme": "node tests/alarme-reengate.test.js && node tests/alarme.test.js && node tests/alarme-sinais.test.js"
+    "teste-atualizacao": "node tests/atualizacao.test.js",
+    "teste-convite": "node tests/convite.test.js",
+    "teste-alarme": "node tests/alarme-reengate.test.js && node tests/alarme.test.js && node tests/alarme-sinais.test.js && node tests/alarme-consulta.test.js"
   },
   "engines": {
     "node": ">=14"

@@ -39,8 +39,8 @@ ficar sabendo que chegou gente.
 
 | | O que acontece quando chega paciente |
 |---|---|
-| 🔔 **Completo** | Sirene repetindo, faixa no topo e moldura na tela até você silenciar |
-| 🔉 **Discreto** | Um cartão no canto com a cidade de quem chegou, e um som curto que toca **duas vezes**. Some sozinho, e **volta a cada 2 min** se o paciente continuar esperando |
+| 🔔 **Completo** | Sirene repetindo, faixa no topo e moldura na tela até você silenciar; se você silenciar e não atender, **volta a cada 1 min** |
+| 🔉 **Discreto** | Um cartão no canto com a cidade de quem chegou, e um som curto que toca **duas vezes**. Some sozinho, e **volta a cada 1 min** se o paciente continuar esperando; aos 5 min de espera do mais antigo, sobe um degrau (faixa e moldura) |
 | 🔕 **Silencioso** | Só o contador na aba e no favicone |
 
 O aviso do sistema, o título e o favicone valem nos três: eles são sobre **onde**
@@ -55,6 +55,13 @@ A lista de sons muda junto com a intensidade. As sirenes foram feitas para
 repetir e soam truncadas se tocadas uma vez só, então o modo discreto só oferece
 os sons curtos — os que têm começo, meio e fim em menos de um segundo.
 
+| na aba, mas de fundo | contador no título e no ícone da aba: `(3) Meeds Doctor` |
+| fora do navegador | **notificação do sistema, clicável** — traz a aba para frente |
+| ninguém reagiu | volta em 1 minuto, e notifica de novo |
+
+Clicar na notificação é "estou indo": traz a aba e silencia. Se o médico não
+atender de fato, o alarme volta. É *acknowledge*, não *dismiss*.
+
 ### A janela de aviso
 
 Terceiro canal, opcional e desligado de fábrica. A notificação do sistema aparece
@@ -66,16 +73,43 @@ Ela só abre quando o médico está **fora** da aba, e nunca rouba o foco. Duas
 razões para não ser padrão: o Chrome bloqueia pop-up não pedido por clique, e uma
 janela que salta no meio de uma teleconsulta é pior que o problema que resolve.
 
+Por isso, em vez de uma chave solta, o painel mostra um **cartão-convite**: ele
+pergunta se o médico quer ser avisado quando estiver em outro programa e, no
+"sim", abre a janela primeiro (o clique ainda vale para o Chrome) e só então pede
+a permissão de notificação. Se o Chrome bloquear o pop-up, o cartão mostra o
+passo a passo para liberar. Quem fechou o convite ou quer mudar de ideia volta
+por **Configurar avisos fora da aba**, nos ajustes.
+
 No iPad a opção nem aparece — lá o iOS abre uma *aba* por cima do site, e só a
 partir de um gesto. Oferecer uma chave que não faz nada, com uma instrução de
 desbloqueio que fala de um ícone que o iPad não tem, gasta o plantão e ensina a
 desconfiar do resto do painel.
-| na aba, mas de fundo | contador no título e no ícone da aba: `(3) Meeds Doctor` |
-| fora do navegador | **notificação do sistema, clicável** — traz a aba para frente |
-| ninguém reagiu | volta em 5 minutos, e notifica de novo |
 
-Clicar na notificação é "estou indo": traz a aba e silencia. Se o médico não
-atender de fato, o alarme volta. É *acknowledge*, não *dismiss*.
+### A fila que se atualiza
+
+O app do Meeds Doctor não atualiza a fila sozinho: ela só é buscada quando o
+médico clica no menu, e um paciente já puxado por outro médico pode continuar na
+tela por minutos. O script cuida disso:
+
+- **Consulta de 15 s.** Só depois de a própria tela fazer a primeira chamada à
+  fila, o script passa a consultar `/api/doctor/queues/mine` a cada 15 s, com a
+  mesma URL e os mesmos cabeçalhos dela (uma chamada da tela sem `Authorization`
+  não apaga o token já guardado). Consulta sem resposta em 10 s é abortada e conta
+  como erro; qualquer erro espera 30 s. Resposta 401/403 suspende a consulta até a
+  tela chamar de novo, e o painel de ajustes avisa: "A consulta automática da fila
+  parou (sessão expirada?). Abra o Pronto atendimento para retomar."
+- **Tempo de espera do servidor.** "O mais antigo há N min" vem do `waitingSince`
+  de cada item, não do momento em que o script viu o paciente — recarregar a aba
+  não zera a contagem.
+- **Barra "A fila mudou".** Quando a consulta mostra que a fila mudou (outro
+  médico atendeu, alguém saiu), uma barra no canto inferior esquerdo avisa e
+  oferece **Atualizar fila**, que clica no menu "Pronto atendimento" do próprio
+  app — se não achar o menu, a barra só some; a página nunca é recarregada. A
+  barra some sozinha quando o contador sai da tela (o médico entrou numa consulta)
+  e quando o "Atender" dá certo. Fica embaixo para não cobrir o banner do alarme.
+- **Quem puxou primeiro.** O script escuta a resposta do "Atender" (`claim`): 2xx
+  tira o paciente da conta; erro 4xx mostra "Outro médico já atendeu este
+  paciente."
 
 ### Por que não pisca mais forte
 
@@ -97,14 +131,15 @@ Quatro sinais independentes, porque um sozinho é frágil:
 |---|---|---|
 | **A. Toast do app** | o "Novo paciente na fila" que o próprio Meeds Doctor emite | dispara |
 | **B. Cartão "Aguardando"** | o número no topo do Pronto Atendimento — **só existe nessa tela** | conta, e diz quando parar |
-| **C. `/api/doctor/queues/mine`** | a resposta que a própria tela já busca — **só quando o médico navega** | dispara (entrada nova na fila), conta, e diz quando a fila esvaziou |
+| **C. `/api/doctor/queues/mine`** | a resposta que a tela busca ao navegar, e que o script também consulta a cada 15 s (ver "A fila que se atualiza") | dispara (entrada nova na fila), conta, e diz quando a fila esvaziou |
 | **D. Clique em "Atender"** | o botão da linha de um paciente, na tela da fila | tira esse paciente da conta na hora |
 
 ### O que a gravação de 14/10 ensinou
 
 O app **empurra a chegada** para a tela sem fazer requisição nenhuma: o contador
-e o toast aparecem sozinhos. A fila só é buscada (`/queues/mine`) quando o médico
-clica no menu. E o cartão "Aguardando" não existe fora do Pronto Atendimento.
+e o toast aparecem sozinhos. A própria tela só busca a fila (`/queues/mine`)
+quando o médico clica no menu — por isso o script passou a consultá-la a cada
+15 s, depois da primeira chamada da tela. E o cartão "Aguardando" não existe fora do Pronto Atendimento.
 
 Consequência: **o alarme sabe pouco, e o pouco que sabe envelhece.** Ele foi
 desenhado em volta disso:
@@ -117,12 +152,19 @@ desenhado em volta disso:
   Uma resposta com a fila zerada cala o alarme, cancela os lembretes e limpa a aba.
 - **Lembrete só toca com leitura fresca** (a regra D64, a mesma do Assistente
   Meeds: *abstenção não é prova de "ainda cheia"*). O contador "Aguardando" só
-  existe na tela do Pronto Atendimento; fora dela o último número fica parado.
-  Por isso o reengate de 5 min, o repique de 2 min do Discreto e o lembrete de
-  quem já esperava **só soam se o contador foi lido há no máximo 12 s**. Sem
-  leitura fresca eles reagendam em silêncio, no mesmo ritmo — **não desistem** —
-  e decidem quando o médico volta à tela da fila. A corrente só morre com prova
-  fresca de fila vazia.
+  existe na tela do Pronto Atendimento; fora dela o último número fica parado (é a consulta de 15 s que mantém a
+  leitura fresca fora do Pronto Atendimento).
+  Por isso o reengate de 1 min, o repique de 1 min do Discreto e o lembrete de
+  quem já esperava **só soam se o contador foi lido há no máximo 40 s**. Sem
+  leitura fresca, o lembrete pede a consulta na hora e decide pela resposta; se não
+  dá para consultar (consulta ainda não capturada, ou suspensa por 401/403) ou ela
+  falha, ele reagenda em silêncio, no mesmo ritmo — **não desiste**. Toda leitura
+  com gente esperando garante que há um lembrete agendado. A corrente só morre com
+  prova fresca de fila vazia.
+- **Contador parado não é chegada.** A tela não se atualiza sozinha: um número
+  "Aguardando" que não mudou desde a leitura anterior não vale como evidência
+  quando a rede já leu depois dele. Depois de a consulta dizer "fila vazia", só uma
+  *mudança* do contador (ou o aviso do próprio app) conta como chegada nova.
 - **"Atender" clicado na fila** encerra o aviso desse paciente antes de a tela
   mudar. Só vale com o cartão na tela: na Agenda o mesmo botão atende uma consulta
   *marcada*, e contar esse clique tiraria da memória um paciente que ainda espera.
@@ -195,6 +237,14 @@ faria o alarme nunca parar.
 Desenhar em cima do que se observou, e não do que se imagina, é o que separa um
 alarme que funciona de um que só parece funcionar.
 
+### Atualização
+
+Ao clicar no sino, o alarme confere se existe versão mais nova (lê só o
+cabeçalho `.meta.js` publicado, no máximo uma vez a cada 30 minutos). Se estiver
+em dia, não aparece nada. Se houver versão nova, um cartão acima do sino pergunta
+"Atualizar agora?"; o botão abre a tela de atualização do Tampermonkey (ou do app
+Userscripts, no iPad) — quem confirma é você.
+
 ## Privacidade
 
 - **O nome do paciente nunca é guardado, registrado, exibido nem enviado**, em
@@ -225,8 +275,7 @@ alarme que funciona de um que só parece funcionar.
 - Os ids de atendimento vivem em memória e morrem com a aba.
 - Em disco vão só as preferências do médico: intensidade, som, volume e se
   a janela de aviso está ligada.
-- O script **não faz requisição própria**. Ele lê respostas que a própria tela
-  já buscou, e `/queues/mine` é, por definição, a fila do médico logado.
+- O script faz uma única consulta de leitura, à fila do médico logado (`/api/doctor/queues/mine`), a cada 15 s. O cabeçalho de acesso é copiado da chamada que a própria tela fez e vive só em memória.
 - Uma notificação do sistema aparece na tela de bloqueio e no histórico de
   notificações do computador, fora do navegador. É o pior lugar possível para um
   dado de paciente — por isso nenhum vai para lá.
@@ -250,8 +299,11 @@ Estrutura:
 
 ```
 src/atencao.js   por onde avisar (título, favicone, notificação, tela acesa)
-src/som.js       os onze sons, sintetizados — sem arquivo externo
-                 (seis que repetem, cinco curtos; ver o campo `curto`)
+src/visual.js    o visual do painel (cabeçalho branco, sino em SVG), igual ao Assistente Meeds
+src/convite.js   o cartão-convite dos avisos fora da aba e o passo a passo do pop-up
+src/som.js       os sons, sintetizados — sem arquivo externo
+                 (os que repetem e os curtos; ver o campo `curto`); o padrão
+                 é o "Alerta (3 notas)"
 src/fila.js      como saber que chegou paciente NESTE site
 src/alarme.js    a lógica e a interface
 scripts/build.js junta tudo num userscript só
