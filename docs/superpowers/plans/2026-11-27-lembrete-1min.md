@@ -149,7 +149,7 @@ git commit -m "feat(fila): consulta propria da fila a cada 15 s, so leitura e so
 
 - [ ] **Step 3: Implementar**
   - Constantes de 60 000 ms e `DEGRAU_ESPERA_MS`.
-  - Em `aoResponderFila`: para cada id atual, `vistoDesde[id] = vistoDesde[id] || Date.now()`; apague os ids que sumiram. `esperaDoMaisAntigoMs()` = `Date.now() - min(vistoDesde)` ou `null` se vazio.
+  - Em `aoResponderFila`: para cada id atual, `vistoDesde[id] = vistoDesde[id] || chegada`, em que `chegada = Date.parse(item.checkedInAt)` quando o item da fila trouxer `checkedInAt` válido (campo real do servidor, visto na gravação de 17/09), senão `Date.now()`; apague os ids que sumiram. Isso exige ler o item junto com o id — acrescente em `src/fila.js` uma função `chegadasDaFila(json) -> Array<{ id: string, chegadaMs: number|null }>` só para o formato reconhecido (array de `{ queue, items }`, id = `consultationId` ou `id` do item, como `chaveDoItem` já faz), devolvendo `[]` para outro formato. Teste extra: `checkedInAt de 7 min atras ja aparece como 7 min` na primeira resposta. `esperaDoMaisAntigoMs()` = `Date.now() - min(vistoDesde)` ou `null` se vazio.
   - `textoDoMotivo()`: quando a espera ≥ 60 000, acrescente `" · o mais antigo há " + Math.floor(ms/60000) + " min"`.
   - `dispararAlarme("ainda-aguardando")` no Discreto com espera ≥ `DEGRAU_ESPERA_MS`: mostra também `elBanner` e `elMoldura` (som continua o curto). Os mesmos elementos somem no `silenciarAlarme()` já existente.
 
@@ -185,12 +185,14 @@ git commit -m "feat(alarme): lembrete a cada 1 min, espera do mais antigo e degr
 
 - [ ] **Step 3: Implementar** — em `aoResponderFila`, com `origem === "consulta"`, base existente, algum id de `idsVistos` ausente em `atual` e `Fila.lerContadorAguardando() !== null` → mostra a barra; com `origem === "tela"` → esconde. Clique: `if (!Fila.clicarMenuProntoAtendimento()) raiz.location.reload();` e esconde a barra. Nunca clique sem o médico pedir.
 
+- [ ] **Step 3b: Escuta do "Atender" pela rede (gravação de 17/09)** — "Atender" chama `POST https://api.calltechsaude.com.br/api/doctor/consultations/{id}/claim`. Acrescente `Fila.ehChamadaDeClaim(url, metodo) -> boolean` (POST e caminho terminando em `/claim` sob `/api/doctor/consultations/`). No gancho de XHR/fetch existente: resposta **2xx** → `aoMedicoAtender()` (o clique no botão continua como reforço, mas um mesmo atendimento não pode descontar dois pacientes: guarde o id do último claim atendido e ignore o clique se veio nos últimos 3 s); resposta **4xx** → mostra a barra `#mb-fila-mudou` com o texto "Outro médico já atendeu este paciente." e o mesmo botão "Atualizar fila". Testes em `alarme-consulta.test.js`: `claim 201 tira um da conta`, `claim 409 mostra aviso de outro medico`, `clique + claim nao descontam dois`; em `fila.test.js`: `ehChamadaDeClaim` aceita o POST e recusa GET e `/start`.
+
 - [ ] **Step 4: Rodar e ver passar** — `npm run verificar`.
 
 - [ ] **Step 5: Commit**
 ```bash
 git add src/fila.js src/alarme.js tests/
-git commit -m "feat(fila): barra 'a fila mudou' com atualizar pelo menu do app"
+git commit -m "feat(fila): barra 'a fila mudou' e aviso de paciente ja puxado por outro medico"
 ```
 
 ---
