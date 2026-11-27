@@ -126,14 +126,15 @@ Quatro sinais independentes, porque um sozinho é frágil:
 |---|---|---|
 | **A. Toast do app** | o "Novo paciente na fila" que o próprio Meeds Doctor emite | dispara |
 | **B. Cartão "Aguardando"** | o número no topo do Pronto Atendimento — **só existe nessa tela** | conta, e diz quando parar |
-| **C. `/api/doctor/queues/mine`** | a resposta que a própria tela já busca — **só quando o médico navega** | dispara (entrada nova na fila), conta, e diz quando a fila esvaziou |
+| **C. `/api/doctor/queues/mine`** | a resposta que a tela busca ao navegar, e que o script também consulta a cada 15 s (ver "A fila que se atualiza") | dispara (entrada nova na fila), conta, e diz quando a fila esvaziou |
 | **D. Clique em "Atender"** | o botão da linha de um paciente, na tela da fila | tira esse paciente da conta na hora |
 
 ### O que a gravação de 14/10 ensinou
 
 O app **empurra a chegada** para a tela sem fazer requisição nenhuma: o contador
-e o toast aparecem sozinhos. A fila só é buscada (`/queues/mine`) quando o médico
-clica no menu. E o cartão "Aguardando" não existe fora do Pronto Atendimento.
+e o toast aparecem sozinhos. A própria tela só busca a fila (`/queues/mine`)
+quando o médico clica no menu — por isso o script passou a consultá-la a cada
+15 s, depois da primeira chamada da tela. E o cartão "Aguardando" não existe fora do Pronto Atendimento.
 
 Consequência: **o alarme sabe pouco, e o pouco que sabe envelhece.** Ele foi
 desenhado em volta disso:
@@ -146,9 +147,10 @@ desenhado em volta disso:
   Uma resposta com a fila zerada cala o alarme, cancela os lembretes e limpa a aba.
 - **Lembrete só toca com leitura fresca** (a regra D64, a mesma do Assistente
   Meeds: *abstenção não é prova de "ainda cheia"*). O contador "Aguardando" só
-  existe na tela do Pronto Atendimento; fora dela o último número fica parado.
+  existe na tela do Pronto Atendimento; fora dela o último número fica parado (é a consulta de 15 s que mantém a
+  leitura fresca fora do Pronto Atendimento).
   Por isso o reengate de 1 min, o repique de 1 min do Discreto e o lembrete de
-  quem já esperava **só soam se o contador foi lido há no máximo 12 s**. Sem
+  quem já esperava **só soam se o contador foi lido há no máximo 40 s**. Sem
   leitura fresca eles reagendam em silêncio, no mesmo ritmo — **não desistem** —
   e decidem quando o médico volta à tela da fila. A corrente só morre com prova
   fresca de fila vazia.

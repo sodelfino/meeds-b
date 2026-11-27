@@ -7,11 +7,11 @@
  * que fica PARADO enquanto o medico nao estiver na tela do Pronto
  * Atendimento (o contador "Aguardando" so existe la).
  *
- * silenciarComReengate() agenda uma checagem 5 min depois
+ * silenciarComReengate() agenda uma checagem 1 min depois
  * (REENGATE_MS). Ate a correcao, essa checagem lia `ultimoContador`
  * direto, sem perguntar HA QUANTO TEMPO aquele numero foi lido. Se o
  * medico silenciou e saiu da tela para atender o paciente, o numero
- * fica congelado no valor de antes — e o reengate, 5 minutos depois,
+ * fica congelado no valor de antes — e o reengate, 1 minuto depois,
  * toca a sirene de novo em cima de um numero que pode estar
  * completamente desatualizado.
  *
@@ -146,7 +146,7 @@ function pendente(timeouts, atrasoExato) {
 }
 
 /* Leva do zero ate "silenciado, reengate agendado": dispara com fila
- * cheia, deixa a trava de 2 min estourar (o caminho real quando
+ * cheia, deixa a trava de espera estourar (o caminho real quando
  * ninguem clica em "Silenciar" a tempo). */
 function chegarNoReengateAgendado(api, timeouts) {
   api._definirContador(3); // fila cheia no momento do disparo
@@ -191,19 +191,19 @@ function chegarNoReengateAgendado(api, timeouts) {
  * ------------------------------------------------------------------
  * Reproduz o cenario real: o medico silenciou, saiu da tela da fila
  * para atender o paciente, e o contador nunca mais foi lido. Passados
- * os 5 minutos do reengate, o ultimo numero conhecido (3) continua
- * dizendo "cheia" — mas ele tem 5 minutos de idade, nao segundos.
+ * o minuto do reengate, o ultimo numero conhecido (3) continua
+ * dizendo "cheia" — mas ele tem 1 minuto de idade, nao segundos.
  * ------------------------------------------------------------------ */
 {
   const { api, timeouts, chamadasDeSom } = carregar();
   chegarNoReengateAgendado(api, timeouts);
   ok("1 som ate aqui (disparo original)", chamadasDeSom.length === 1);
 
-  api._envelhecerContador(REENGATE_MS); // o numero (3) tem 5 min de idade
+  api._envelhecerContador(REENGATE_MS); // o numero (3) tem 1 min de idade
   dispararTimeout(timeouts, REENGATE_MS);
 
   ok(
-    "leitura CONGELADA (5 min de idade) NAO toca a sirene de novo",
+    "leitura CONGELADA (1 min de idade) NAO toca a sirene de novo",
     chamadasDeSom.length === 1,
     chamadasDeSom.length
   );

@@ -96,7 +96,7 @@ cenario("C3: Discreto volta a cada 1 min enquanto o paciente continua esperando"
   ok("e o cartao diz que ele AINDA espera", /ainda aguardando/i.test(A.cartao().titulo), A.cartao().titulo);
   A.avancar(MIN);
   const aos2 = A.sons.filter((s) => s.t - t0 >= 115 * SEG && s.t - t0 <= 135 * SEG).length;
-  ok("e continua: novo lembrete aos 2 min", aos2 === 2, aos2 + " batidas");
+  ok("e continua: novo lembrete 1 min depois", aos2 === 2, aos2 + " batidas");
 });
 
 cenario("Discreto: se a fila esvazia antes do lembrete, ele nao toca", () => {
@@ -226,7 +226,7 @@ cenario("C1e: voltar ao Pronto Atendimento e ler 0 limpa tudo, inclusive o lembr
   const A = ligar({ intensidade: "completo" });
   A.mostrarTela(telaFila(1, PAC));
   A.toast();
-  A.clicar("mb-silenciar");              // "estou indo": agenda o lembrete de 5 min
+  A.clicar("mb-silenciar");              // "estou indo": agenda o lembrete de 1 min
   A.mostrarTela(telaSemContador("Consulta"));
   A.avancar(2 * MIN);
   A.mostrarTela(telaFila(0, []));        // volta, e a fila esta vazia

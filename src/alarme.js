@@ -16,7 +16,7 @@
  *   medico na aba, olhando  -> som + banner
  *   aba de fundo            -> contador no titulo e no favicone
  *   fora do navegador       -> notificacao do sistema, clicavel
- *   ninguem reagiu          -> reengate em 5 min, e renotifica
+ *   ninguem reagiu          -> reengate em 1 min, e renotifica
  * A escada existe porque alarme mais alto nao resolve: o que resolve e
  * chegar no canal onde o medico esta. Ver o README.
  *
@@ -68,7 +68,7 @@
    * PARIDADE COM O ASSISTENTE MEEDS (sodelfino/meeds-suite)
    * La o Discreto mostra um cartao no canto com a cidade de quem chegou, o
    * som curto toca DUAS vezes (uma vez so passa despercebida num plantao
-   * barulhento) e volta a cada 2 min enquanto o paciente continuar
+   * barulhento) e volta a cada 1 min enquanto o paciente continuar
    * esperando. Isto aqui e a mesma experiencia, com a mesma cautela: o
    * cartao mostra so a CIDADE (o selo minusculo do paciente), nunca o
    * nome — ver lerOrigemDoUltimoPaciente() em src/fila.js e a nota de
@@ -346,7 +346,7 @@
     if (origem !== "rede-queues-mine") chegadasSemRede++;
     console.debug("[Meeds B] chegada detectada por", origem);
     /* A cidade e lida NA HORA da chegada: e o unico momento em que se sabe
-     * qual selo pertence a quem acabou de entrar. Um repique 2 min depois
+     * qual selo pertence a quem acabou de entrar. Um repique 1 min depois
      * so reusa este valor — nao le a tela de novo (ver agendarRepiqueDe-
      * EsperaDiscreto). Se nao achar, o cartao mostra so a contagem. */
     ultimaOrigem = Fila.lerOrigemDoUltimoPaciente();
@@ -375,7 +375,7 @@
   }
 
   /* motivo: "chegada" (padrao) ou "ainda-aguardando" (repique do Discreto:
-   * o MESMO paciente de 2 min atras continua na fila, ninguem novo
+   * o MESMO paciente de 1 min atras continua na fila, ninguem novo
    * chegou). So muda o TITULO do cartao — o resto do disparo e identico. */
   function dispararAlarme(motivo) {
     if (tocando) return;
@@ -422,7 +422,7 @@
        * senao o proximo paciente nao dispararia nada (o guard `tocando`
        * do topo barraria). Mas isto e o FIM NATURAL do toque, nao o medico
        * reconhecendo o alarme — por isso NAO passa por silenciarAlarme():
-       * ate a v1.4.0 passava, e ele cancelava o repique de 2 min que acabou
+       * ate a v1.4.0 passava, e ele cancelava o repique de 1 min que acabou
        * de ser agendado logo abaixo, 4 s depois (C3). Quem insiste no
        * Discreto e o repique. */
       timeoutLimite = setTimeout(fecharCicloCurto, 4000);
@@ -443,7 +443,7 @@
    * REPIQUE DE ESPERA — SO NO MODO DISCRETO
    * ------------------------------------------------------------------
    * UM SO TIMER, agendado a cada disparo do modo curto — nunca um por
-   * paciente. Cada vez que dispara, agenda a PROXIMA checagem em 2 min; na
+   * paciente. Cada vez que dispara, agenda a PROXIMA checagem em 1 min; na
    * hora de checar, confere de novo se ainda ha alguem esperando E se a
    * intensidade continua Discreto. Se qualquer uma das duas nao for mais
    * verdade, para sozinho — sem precisar de um botao "silenciar" que o
@@ -492,7 +492,7 @@
 
   /* Fim natural do toque curto (Discreto). Nao e uma acao do medico: nao
    * esconde o cartao (ele tem a duracao dele), nao fecha a janela de aviso,
-   * nao arma o lembrete de 5 min nem cancela o de 2. So devolve o estado. */
+   * nao arma o lembrete de 1 min nem cancela o repique. So devolve o estado. */
   function fecharCicloCurto() {
     pararSom();
     tocando = false;
@@ -635,7 +635,7 @@
     marcarAtencao(false);
   }
 
-  /* Volta em 5 min, se ainda houver quem esperar nessa hora. */
+  /* Volta em 1 min, se ainda houver quem esperar nessa hora. */
   function armarReengate() {
     if (timeoutReengate) { clearTimeout(timeoutReengate); timeoutReengate = null; }
     if (quantosAguardando() <= 0) return;
@@ -658,9 +658,9 @@
    * contador visivel de novo). A corrente so morre quando ha PROVA fresca
    * de fila vazia; ate la, ela so para de SOAR sem prova.
    *
-   * Vale para TODO lembrete que soa sozinho: o reengate de 5 min, o lembrete
+   * Vale para TODO lembrete que soa sozinho: o reengate de 1 min, o lembrete
    * de quem ja esperava quando o alarme ligou, e (via
-   * repiqueDeEsperaDiscreto) o repique de 2 min do Discreto. */
+   * repiqueDeEsperaDiscreto) o repique de 1 min do Discreto. */
   function tentarReengatarAlarme() {
     timeoutReengate = null;
     if (!evidenciaFrescaDoContador()) {
