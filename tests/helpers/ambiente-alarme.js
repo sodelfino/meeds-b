@@ -346,6 +346,7 @@ function criarAmbiente(opcoes) {
       x.open("GET", "https://api.calltechsaude.com.br/api/doctor/queues/mine");
       const h = (opts && opts.headers) || {};
       Object.keys(h).forEach((k) => x.setRequestHeader(k, h[k]));
+      x.withCredentials = !!(opts && opts.withCredentials);
       x.send();
       x.status = 200;
       x.responseText = JSON.stringify(corpo);

@@ -25,19 +25,34 @@ function cenario(nome, fn) {
 
 const SEG = 1000;
 const PAC = [{ nome: "Fulano de Tal", cidade: "macae", novo: true }];
-/* ligar() deixa o relogio em 4,1 s; a primeira consulta sai aos 15 s */
-const ATE_A_PRIMEIRA = 15000 - 4100;
+/* a primeira consulta sai 15 s depois da primeira busca da fila pela tela */
+const ATE_A_PRIMEIRA = 15000;
+
+cenario("sem chamada do app nao consulta", () => {
+  const A = ligar({ intensidade: "completo" });
+  A.avancar(60 * SEG);
+  ok("nenhum fetch as cegas", A.chamadasDeFetch.length === 0, String(A.chamadasDeFetch.length));
+});
 
 cenario("faz GET sozinho apos 15 s", () => {
   const A = ligar({ intensidade: "completo" });
+  A.appBuscaFila(filaReal([]), { withCredentials: true });
   A.avancar(ATE_A_PRIMEIRA - 1);
   ok("nada antes dos 15 s", A.chamadasDeFetch.length === 0, String(A.chamadasDeFetch.length));
   A.avancar(1);
   ok("uma chamada", A.chamadasDeFetch.length === 1, String(A.chamadasDeFetch.length));
   const c = A.chamadasDeFetch[0] || { opcoes: {} };
   ok("na fila do medico", /\/api\/doctor\/queues\/mine$/.test(c.url), c.url);
-  ok("com credenciais", c.opcoes.credentials === "include", c.opcoes.credentials);
+  ok("credenciais como a tela (withCredentials -> include)", c.opcoes.credentials === "include", c.opcoes.credentials);
   ok("so GET", !c.opcoes.method || c.opcoes.method === "GET", c.opcoes.method);
+});
+
+cenario("tela sem withCredentials -> same-origin", () => {
+  const A = ligar({ intensidade: "completo" });
+  A.appBuscaFila(filaReal([]));
+  A.avancar(ATE_A_PRIMEIRA);
+  const c = A.chamadasDeFetch[0] || { opcoes: {} };
+  ok("same-origin", c.opcoes.credentials === "same-origin", c.opcoes.credentials);
 });
 
 cenario("reusa cabecalho do app, so em memoria", () => {
@@ -52,6 +67,7 @@ cenario("reusa cabecalho do app, so em memoria", () => {
 
 cenario("401 suspende e a tela retoma", () => {
   const A = ligar({ intensidade: "completo" });
+  A.appBuscaFila(filaReal([]));
   A.respostasDeFetch.push({ status: 401 });
   A.avancar(ATE_A_PRIMEIRA);
   A.avancar(60 * SEG);
@@ -63,6 +79,7 @@ cenario("401 suspende e a tela retoma", () => {
 
 cenario("erro 500 espera 60 s", () => {
   const A = ligar({ intensidade: "completo" });
+  A.appBuscaFila(filaReal([]));
   A.respostasDeFetch.push({ status: 500 });
   A.avancar(ATE_A_PRIMEIRA);
   A.avancar(59 * SEG);
@@ -73,6 +90,7 @@ cenario("erro 500 espera 60 s", () => {
 
 cenario("sem sobreposicao", () => {
   const A = ligar({ intensidade: "completo" });
+  A.appBuscaFila(filaReal([]));
   A.respostasDeFetch.push("pendurar");
   A.avancar(ATE_A_PRIMEIRA);
   A.avancar(60 * SEG);
@@ -81,6 +99,7 @@ cenario("sem sobreposicao", () => {
 
 cenario("fila vazia pela consulta cala o alarme", () => {
   const A = ligar({ intensidade: "completo", tela: telaFila(0, []) });
+  A.appBuscaFila(filaReal([]));
   A.mostrarTela(telaFila(1, PAC));
   A.toast();
   ok("tocando", A.estado().tocando === true);
@@ -110,12 +129,12 @@ cenario("atender e eco atrasado da consulta", () => {
 
 cenario("a consulta propria nao passa pelo gancho", () => {
   const A = ligar({ intensidade: "completo" });
+  A.appBuscaFila(filaReal([]));
+  ok("o gancho ve a busca da tela", A.estado().respostasDaTela === 1, String(A.estado().respostasDaTela));
   A.respostasDeFetch.push({ status: 200, corpo: filaReal([]) });
   A.avancar(ATE_A_PRIMEIRA);
   ok("a consulta respondeu", A.chamadasDeFetch.length === 1, String(A.chamadasDeFetch.length));
-  ok("o gancho da tela nao a viu", A.estado().respostasDaTela === 0, String(A.estado().respostasDaTela));
-  A.appBuscaFila(filaReal([]));
-  ok("mas ve a busca da tela", A.estado().respostasDaTela === 1, String(A.estado().respostasDaTela));
+  ok("o gancho nao viu a consulta", A.estado().respostasDaTela === 1, String(A.estado().respostasDaTela));
 });
 
 console.log(falhas ? "\n" + falhas + " FALHA(S)" : "\ntodos passaram");

@@ -773,6 +773,8 @@
   var fetchOriginal = null;
   var urlDaFila = null;           // absoluta, da ultima chamada da tela
   var cabecalhosDaFila = null;    // nome -> valor, da ultima chamada da tela; nunca vai a disco
+  /* o modo de credenciais que a tela usou: a chamada dela prova que o CORS da API aceita */
+  var credenciaisDaFila = "same-origin";
   var consultaSuspensa = false;   // 401/403: espera a tela buscar de novo (token novo)
   var consultaEmAndamento = false;
   var timerConsulta = null;
@@ -792,15 +794,19 @@
     return saida;
   }
 
-  /* A tela acabou de buscar a fila: e o endereco e o token mais novos. */
-  function anotarChamadaDaTela(url, cabecalhos) {
+  /* A tela acabou de buscar a fila: e o endereco e o token mais novos.
+   * A consulta so comeca depois da primeira chamada da tela: antes dela
+   * nao se sabe o host da API nem o cabecalho de autenticacao. */
+  function anotarChamadaDaTela(url, cabecalhos, credenciais) {
+    var primeira = urlDaFila === null;
     try {
       urlDaFila = new URL(url, location.href).href;
     } catch (e) {
-      /* mantem o anterior */
+      return; // sem endereco confiavel, nao ha o que consultar
     }
     cabecalhosDaFila = cabecalhos;
-    if (consultaSuspensa) {
+    credenciaisDaFila = credenciais || "same-origin";
+    if (primeira || consultaSuspensa) {
       consultaSuspensa = false;
       agendarConsulta(INTERVALO_CONSULTA_MS);
     }
@@ -815,6 +821,7 @@
 
   function consultarFilaAgora() {
     timerConsulta = null;
+    if (!urlDaFila) return;
     if (consultaEmAndamento || consultaSuspensa) return agendarConsulta(INTERVALO_CONSULTA_MS);
     consultaEmAndamento = true;
     function falhou() {
@@ -824,9 +831,9 @@
     try {
       /* fetchOriginal, nunca raiz.fetch: a nossa consulta nao passa pelo gancho */
       fetchOriginal
-        .call(raiz, urlDaFila || location.origin + Fila.CAMINHO_DA_FILA, {
+        .call(raiz, urlDaFila, {
           method: "GET",
-          credentials: "include",
+          credentials: credenciaisDaFila,
           cache: "no-store",
           headers: cabecalhosDaFila || {},
         })
@@ -857,8 +864,9 @@
         var promessa = fetchOriginal.apply(this, arguments);
         if (Fila.ehChamadaDaFila(url)) {
           try {
-            anotarChamadaDaTela(url, copiarCabecalhos((opcoes && opcoes.headers) ||
-              (typeof entrada !== "string" && entrada && entrada.headers)));
+            var pedido = typeof entrada !== "string" && entrada ? entrada : {};
+            anotarChamadaDaTela(url, copiarCabecalhos((opcoes && opcoes.headers) || pedido.headers),
+              (opcoes && opcoes.credentials) || pedido.credentials);
           } catch (e) {
             /* silencioso: anotar e reforco, nunca pode quebrar a pagina */
           }
@@ -892,7 +900,12 @@
       raiz.XMLHttpRequest.prototype.send = function () {
         var xhr = this;
         if (Fila.ehChamadaDaFila(xhr.__meedsBUrl)) {
-          anotarChamadaDaTela(xhr.__meedsBUrl, xhr.__meedsBCabecalhos || {});
+          try {
+            anotarChamadaDaTela(xhr.__meedsBUrl, xhr.__meedsBCabecalhos || {},
+              xhr.withCredentials ? "include" : "same-origin");
+          } catch (e) {
+            /* silencioso: anotar e reforco, nunca pode quebrar a pagina */
+          }
           xhr.addEventListener("load", function () {
             try {
               if (xhr.status !== 200) return;
@@ -1275,8 +1288,7 @@
 
   function iniciar() {
     carregarConfig();
-    instalarEscutaDeRede();
-    agendarConsulta(INTERVALO_CONSULTA_MS);
+    instalarEscutaDeRede(); // a consulta propria comeca na primeira busca da fila pela tela
 
     function quandoTiverCorpo() {
       if (!document.body) return setTimeout(quandoTiverCorpo, 200);
