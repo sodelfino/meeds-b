@@ -172,11 +172,20 @@ cenario("aviso traz a espera do mais antigo", () => {
   ok("diz o mais antigo ha 4 min", /o mais antigo há 4 min/.test(txt), txt);
 });
 
-cenario("checkedInAt de 7 min atras ja aparece como 7 min", () => {
+cenario("waitingSince de 7 min atras ja aparece como 7 min", () => {
   const A = ligar({ intensidade: "completo", tela: telaSemContador() });
   A.appBuscaFila(filaReal([]));
   const em = new Date(A.agora() - 7 * 60 * SEG).toISOString();
   A.respostasDeFetch.push({ status: 200, corpo: filaReal([{ c: "c1", em }]) });
+  A.avancar(ATE_A_PRIMEIRA);
+  ok("7 min", /o mais antigo há 7 min/.test(A.motivoDoBanner()), A.motivoDoBanner());
+});
+
+cenario("so checkedInAt (reserva) de 7 min atras tambem aparece como 7 min", () => {
+  const A = ligar({ intensidade: "completo", tela: telaSemContador() });
+  A.appBuscaFila(filaReal([]));
+  const ci = new Date(A.agora() - 7 * 60 * SEG).toISOString();
+  A.respostasDeFetch.push({ status: 200, corpo: filaReal([{ c: "c1", ci }]) });
   A.avancar(ATE_A_PRIMEIRA);
   ok("7 min", /o mais antigo há 7 min/.test(A.motivoDoBanner()), A.motivoDoBanner());
 });

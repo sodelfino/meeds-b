@@ -363,8 +363,9 @@
   }
 
   /* Chegada de cada consulta, so no formato observado (lista de
-   * { queue, items }); qualquer outro devolve []. checkedInAt e o ISO do
-   * servidor; invalido ou ausente -> chegadaMs null. */
+   * { queue, items }); qualquer outro devolve []. waitingSince (ISO do
+   * servidor, campo do item da fila) e a chegada; checkedInAt fica de
+   * reserva; nenhum valido -> chegadaMs null. */
   function chegadasDaFila(json) {
     var saida = [];
     if (!Array.isArray(json)) return saida;
@@ -374,7 +375,8 @@
       for (var j = 0; j < f.items.length; j++) {
         var chave = chaveDoItem(f.items[j]);
         if (chave === null) continue;
-        var ms = Date.parse(f.items[j].checkedInAt);
+        var ms = Date.parse(f.items[j].waitingSince);
+        if (isNaN(ms)) ms = Date.parse(f.items[j].checkedInAt);
         saida.push({ id: chave, chegadaMs: isNaN(ms) ? null : ms });
       }
     }

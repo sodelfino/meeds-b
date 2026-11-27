@@ -80,7 +80,7 @@ function telaSemContador(titulo) {
 }
 
 /* O corpo real de /api/doctor/queues/mine (formato observado em 14/10).
- * itens = [{ c: consultationId, p: patient.id, em: checkedInAt ISO }] — vao na fila "Teste". */
+ * itens = [{ c: consultationId, p: patient.id, em: waitingSince ISO, ci: checkedInAt ISO (so reserva) }] — vao na fila "Teste". */
 function filaReal(itens) {
   const lista = itens || [];
   return [
@@ -89,11 +89,12 @@ function filaReal(itens) {
     { queue: { id: "q-teste", careLine: "medica", label: "Teste", specialty: "GENERALISTA", isAvailable: true },
       status: "ok",
       items: lista.map((i) => {
-        const item = { priority: "normal", tenantId: "macae", waitingSince: "2026-10-14T14:21:19.471Z",
+        const item = { priority: "normal", tenantId: "macae",
                        patient: { name: "NOME QUE NUNCA PODE VAZAR", locality: {} } };
         if (i.c) item.consultationId = i.c;
         if (i.p) item.patient.id = i.p;
-        if (i.em) item.checkedInAt = i.em;
+        if (i.em) item.waitingSince = i.em;
+        if (i.ci) item.checkedInAt = i.ci;
         return item;
       }),
       stats: { waiting: lista.length, inProgress: 0, completedToday: 0, avgDurationMinutes: 0 } },
