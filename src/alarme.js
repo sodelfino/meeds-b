@@ -84,7 +84,7 @@
     discreto: {
       rotulo: "Discreto",
       icone: "🔉",
-      resumo: "Um cartão no canto com a cidade de quem chegou, e um som curto que toca duas vezes — e volta a cada 2 min se o paciente continuar esperando.",
+      resumo: "Um cartão no canto com a cidade de quem chegou, e um som curto que toca duas vezes — e volta a cada 1 min se o paciente continuar esperando.",
       som: "curto", banner: false, cartao: true,
     },
     completo: {
@@ -120,9 +120,8 @@
   var INTERVALO_DOM_MS = 4000;
   var DURACAO_CARTAO_MS = 12000;   // quanto o cartao do Discreto fica na tela
   /* Discreto: se o paciente que disparou o alarme continuar na fila, o
-   * cartao e as duas batidas voltam a cada 2 min — mais curto que o
-   * reengate do Completo (5 min) porque o Discreto e pensado para lembrar
-   * com frequencia, sem interromper. Ver agendarRepiqueDeEsperaDiscreto(). */
+   * cartao e as duas batidas voltam a cada 1 min — o mesmo ritmo do
+   * reengate do Completo, mas o Discreto lembra sem interromper. Ver agendarRepiqueDeEsperaDiscreto(). */
   var INTERVALO_REPIQUE_DISCRETO_MS = 60000;
   /* espera do mais antigo a partir da qual o Discreto sobe um degrau (faixa + moldura) */
   var DEGRAU_ESPERA_MS = 300000;
@@ -1420,7 +1419,7 @@
     if (permissao === "granted") {
       estado.textContent =
         "Avisos do sistema ligados. Aparecem com o navegador minimizado; clicar traz a aba " +
-        "para frente e silencia — se você não atender, o alarme volta em 5 minutos.";
+        "para frente e silencia — se você não atender, o alarme volta em 1 minuto.";
     } else if (permissao === "denied") {
       estado.textContent =
         "As notificações estão bloqueadas para este site. Libere no cadeado da barra de " +

@@ -19,8 +19,9 @@
  *
  *   C. RESPOSTA DE /api/doctor/queues/mine  (reforco)
  *      A tela consulta esse endereco sozinha. Nos so LEMOS a resposta
- *      que ja passou — nunca fazemos requisicao propria, nunca pedimos
- *      dado de outro profissional. O formato do corpo nao foi observado
+ *      que ja passou e, depois da primeira chamada da tela, fazemos UMA
+ *      consulta propria, so de leitura, a esta mesma fila (a do medico
+ *      logado, a cada 15 s) — nunca pedimos dado de outro profissional. O formato do corpo nao foi observado
  *      em nenhuma gravacao, entao a leitura aqui e deliberadamente
  *      generica: conta quantos objetos com "id" existem na resposta e
  *      nao presume nome de campo nenhum. Se o formato nao bater, este

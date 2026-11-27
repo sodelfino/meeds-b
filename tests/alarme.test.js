@@ -402,7 +402,7 @@ cenario("janela de aviso: fecha quando a fila esvazia", () => {
   ok("fechada", A.janelas[0].closed === true);
 });
 
-cenario("Silencioso: o lembrete de 5 min continua existindo", () => {
+cenario("Silencioso: o lembrete de 1 min continua existindo", () => {
   const A = ligar({ intensidade: "silencioso" });
   A.foraDaAba(true);
   A.mostrarTela(telaFila(1, PAC));

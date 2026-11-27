@@ -79,7 +79,7 @@ function telaSemContador(titulo) {
   return el("div", "", [el("h1", titulo || "Agenda"), el("div", "12")]);
 }
 
-/* O corpo real de /api/doctor/queues/mine (formato observado em 14/10).
+/* O corpo real de /api/doctor/queues/mine (formato observado na gravacao de 27/11).
  * itens = [{ c: consultationId, p: patient.id, em: waitingSince ISO, ci: checkedInAt ISO (so reserva) }] — vao na fila "Teste". */
 function filaReal(itens) {
   const lista = itens || [];
