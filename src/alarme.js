@@ -42,9 +42,10 @@
    * confundem mais do que ajudam, e foi exatamente o que o medico
    * reportou: o sino em si parecia "quebrado" ate ele achar a chave
    * escondida no painel. Ver README ("As tres intensidades"). */
+  var PADRAO_V = 2; // versao do padrao de som, ver carregarConfig()
   var PADRAO = {
-    som: "sirene-classica",       // usado no modo completo (repete)
-    somCurto: "toque-duplo",      // usado no modo discreto (toca uma vez)
+    som: "alerta-3-notas",       // usado no modo completo (repete)
+    somCurto: "alerta-3-notas-curto", // usado no modo discreto (toca uma vez)
     volume: 70,
     intensidade: "completo",      // "silencioso" | "discreto" | "completo"
     janela: false,                // pop-up: opcional, nasce desligado
@@ -204,7 +205,14 @@
      * alarme desligado por ali continua desligado, so que agora atraves
      * da intensidade — sem perder a preferencia na troca de versao. */
     if (guardado.ativo === false) intensidadeGuardada = "silencioso";
+    /* Migracao do padrao de som (v1.6): quem ainda estava nos padroes
+     * antigos passa para o alerta de 3 notas, uma unica vez (padraoV);
+     * quem escolheu outro som, ou escolheu o antigo depois, fica como esta. */
+    var migrar = guardado.padraoV !== PADRAO_V;
+    if (migrar && guardado.som === "sirene-classica") somOk = false;
+    if (migrar && guardado.somCurto === "toque-duplo") curtoOk = false;
     config = {
+      padraoV: PADRAO_V,
       som: somOk ? guardado.som : PADRAO.som,
       somCurto: curtoOk ? guardado.somCurto : PADRAO.somCurto,
       volume: Math.min(100, Math.max(0, parseInt(guardado.volume, 10) || PADRAO.volume)),
@@ -1225,6 +1233,7 @@
         aguardando: quantosAguardando(),
         alertados: alertados,
         intensidade: config && config.intensidade,
+        config: config,
       };
     },
     /* Exposto para o teste de reengate (o mesmo defeito da D64 do

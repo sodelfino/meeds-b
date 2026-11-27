@@ -210,6 +210,10 @@ function criarAmbiente(opcoes) {
 
   const janelas = [];
   armazem["meeds-b:config"] = JSON.stringify({ intensidade: o.intensidade || "completo", janela: !!o.janela });
+  /* `guardado`: preferencia ja gravada, lida pelo GM_getValue (como no
+   * Tampermonkey) em vez do localStorage. O objeto e o "disco". */
+  const disco = {};
+  if (o.guardado) disco["meeds-b:config"] = o.guardado;
 
   const ctx = {
     console: {
@@ -240,6 +244,10 @@ function criarAmbiente(opcoes) {
       return j;
     },
   };
+  if (o.guardado) {
+    ctx.GM_getValue = (k, padrao) => (k in disco ? disco[k] : padrao);
+    ctx.GM_setValue = (k, v) => { disco[k] = v; };
+  }
   ctx.window = ctx;
   ctx.globalThis = ctx;
   vm.createContext(ctx);
@@ -260,6 +268,8 @@ function criarAmbiente(opcoes) {
     notificacoes, sons, logs, janelas,
     titulo: () => documento.title,
     estado: () => ctx.MeedsB._estado(),
+    config: () => ctx.MeedsB._estado().config,
+    disco: () => disco,
     ui: (id) => stubDe(id),
     armazenado: () => JSON.stringify(armazem),
 

@@ -453,5 +453,14 @@ cenario("a rede diz 0: cala na hora, sem esperar janela", () => {
   ok("calou", A.estado().tocando === false);
 });
 
+cenario("padrao novo do som: migra quem estava no antigo, uma vez so", () => {
+  let A = ligar({ guardado: { som: "sirene-classica", somCurto: "toque-duplo", intensidade: "completo" } });
+  ok("migra som padrao antigo", A.config().som === "alerta-3-notas" && A.config().somCurto === "alerta-3-notas-curto");
+  A = ligar({ guardado: { som: "campainha", somCurto: "gota", intensidade: "completo" } });
+  ok("mantem escolha do medico", A.config().som === "campainha" && A.config().somCurto === "gota");
+  A = ligar({ guardado: { som: "sirene-classica", somCurto: "toque-duplo", padraoV: 2 } });
+  ok("nao migra duas vezes", A.config().som === "sirene-classica");
+});
+
 console.log(falhas ? "\n" + falhas + " FALHA(S)" : "\ntodos passaram");
 process.exit(falhas ? 1 : 0);
