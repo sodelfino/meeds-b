@@ -17,7 +17,10 @@
  *   - uma tela do Meeds Doctor de mentira (cartao "Aguardando", linhas de
  *     paciente com selo de cidade, a tela de Agenda sem contador);
  *   - a UI do proprio alarme como "stubs" que gravam o que o codigo faz;
- *   - Notification, AudioContext, MutationObserver e XMLHttpRequest falsos.
+ *   - Notification, AudioContext, MutationObserver, XMLHttpRequest e fetch
+ *     falsos. O fetch responde de forma SINCRONA (um "thenable" que chama o
+ *     callback na hora), para a resposta da consulta propria ser processada
+ *     dentro do mesmo avancar() que a disparou, como no navegador.
  *
  * O som e substituido por um contador (sons[]), porque o que importa para
  * o medico e QUANDO tocou, nao a forma de onda.
@@ -201,10 +204,44 @@ function criarAmbiente(opcoes) {
 
   function XHRFalso() { this._ouvintes = {}; this.status = 0; this.responseText = ""; this.response = null; }
   XHRFalso.prototype.open = function (m, u) { this._url = u; };
+  XHRFalso.prototype.setRequestHeader = function () {};
   XHRFalso.prototype.send = function () {};
   XHRFalso.prototype.addEventListener = function (ev, fn) {
     (this._ouvintes[ev] = this._ouvintes[ev] || []).push(fn);
   };
+
+  /* fetch falso: cada chamada consome a proxima de respostasDeFetch
+   * ({status, corpo} ou "pendurar"); com a fila vazia, pendura — assim os
+   * testes antigos, que nao pensam em consulta, nao recebem fila nenhuma. */
+  const respostasDeFetch = [];
+  const chamadasDeFetch = [];
+  function resolvido(v) {
+    return {
+      then(f) {
+        try { const x = f ? f(v) : v; return x && typeof x.then === "function" ? x : resolvido(x); }
+        catch (e) { return rejeitado(e); }
+      },
+      catch() { return this; },
+    };
+  }
+  function rejeitado(e) {
+    return {
+      then(f, r) { return r ? resolvido(e).then(r) : this; },
+      catch(r) { return this.then(null, r); },
+    };
+  }
+  const pendurado = { then() { return pendurado; }, catch() { return pendurado; } };
+  function fetchFalso(url, opcoes) {
+    chamadasDeFetch.push({ url, opcoes });
+    const r = respostasDeFetch.shift();
+    if (!r || r === "pendurar") return pendurado;
+    const resposta = {
+      status: r.status, ok: r.status >= 200 && r.status < 300,
+      json() { return resolvido(r.corpo); },
+      clone() { return resposta; },
+    };
+    return resolvido(resposta);
+  }
 
   class DataFalsa extends Date { static now() { return agora; } }
 
@@ -235,6 +272,9 @@ function criarAmbiente(opcoes) {
     AudioContext: function () { this.state = "running"; this.resume = () => Promise.resolve(); },
     Notification: NotificacaoFalsa,
     XMLHttpRequest: XHRFalso,
+    fetch: fetchFalso,
+    URL,
+    location: { origin: "https://doctor.calltechsaude.com.br", href: "https://doctor.calltechsaude.com.br/fila" },
     MutationObserver: function (cb) { aoMutar = cb; this.observe = () => {}; this.disconnect = () => {}; },
     focus() {},
     screen: { width: 1920 },
@@ -265,7 +305,7 @@ function criarAmbiente(opcoes) {
     iniciar() { ctx.MeedsB.iniciar(); },
     avancar,
     agora: () => agora,
-    notificacoes, sons, logs, janelas,
+    notificacoes, sons, logs, janelas, respostasDeFetch, chamadasDeFetch,
     titulo: () => documento.title,
     estado: () => ctx.MeedsB._estado(),
     config: () => ctx.MeedsB._estado().config,
@@ -297,6 +337,18 @@ function criarAmbiente(opcoes) {
         x.responseText = JSON.stringify(corpo);
         x.response = x.responseText;
       }
+      (x._ouvintes.load || []).forEach((f) => f());
+    },
+
+    /* a tela buscando a fila por XHR, com os cabecalhos dela (ex.: o token) */
+    appBuscaFila(corpo, opts) {
+      const x = new ctx.XMLHttpRequest();
+      x.open("GET", "https://api.calltechsaude.com.br/api/doctor/queues/mine");
+      const h = (opts && opts.headers) || {};
+      Object.keys(h).forEach((k) => x.setRequestHeader(k, h[k]));
+      x.send();
+      x.status = 200;
+      x.responseText = JSON.stringify(corpo);
       (x._ouvintes.load || []).forEach((f) => f());
     },
 

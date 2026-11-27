@@ -1377,10 +1377,9 @@
   var chegadasSemRede = 0;        // chegadas avisadas por toast/contador desde a ultima resposta da rede
   var motivoAtual = "chegada";    // "chegada" ou "ainda-aguardando": o que o aviso diz de si mesmo
 
-  /* 3x o intervalo de polling do DOM — mesmo raciocinio do Assistente
-   * Meeds (LIMITE_FRESCOR_DOM_MS): da folga para um ciclo perdido sem
-   * abrir mao de exigir leitura RECENTE. Ver evidenciaFrescaDoContador(). */
-  var LIMITE_FRESCOR_CONTADOR_MS = INTERVALO_DOM_MS * 3;
+  /* A consulta de 15 s e a fonte fresca fora do Pronto Atendimento: 40 s
+   * toleram uma consulta perdida. Ver evidenciaFrescaDoContador(). */
+  var LIMITE_FRESCOR_CONTADOR_MS = 40000;
 
   /* ---------------- preferencias ---------------- */
 
@@ -1921,7 +1920,9 @@
     if (n > 0) marcarAtencao(false);
   }
 
-  function aoResponderFila(json) {
+  /* origem: "tela" (o gancho viu a tela buscar) ou "consulta" (a nossa) */
+  function aoResponderFila(json, origem) {
+    if (origem === "tela") respostasDaTela++;
     var ids;
     try {
       ids = Fila.idsDeFolhas(json);
@@ -1970,23 +1971,111 @@
   /* ------------------------------------------------------------------
    * ESCUTA DE REDE
    * ------------------------------------------------------------------
-   * So LEITURA do que a propria tela ja pediu: o gancho copia a resposta
-   * e devolve a original intacta. Nenhuma requisicao e criada por nos,
-   * nenhum dado de outro profissional e consultado — /queues/mine e, por
-   * definicao, a fila do medico logado.
+   * O gancho so LE o que a propria tela ja pediu: copia a resposta e
+   * devolve a original intacta. Da chamada da tela ele anota tambem o
+   * endereco e os cabecalhos (o token), so em memoria, para a NOSSA
+   * consulta — um GET de leitura a cada 15 s no mesmo /queues/mine, que
+   * e por definicao a fila do medico logado. Nenhum outro dado e pedido.
    * ------------------------------------------------------------------ */
+  var INTERVALO_CONSULTA_MS = 15000;
+  var ESPERA_APOS_ERRO_MS = 60000;
+  var fetchOriginal = null;
+  var urlDaFila = null;           // absoluta, da ultima chamada da tela
+  var cabecalhosDaFila = null;    // nome -> valor, da ultima chamada da tela; nunca vai a disco
+  var consultaSuspensa = false;   // 401/403: espera a tela buscar de novo (token novo)
+  var consultaEmAndamento = false;
+  var timerConsulta = null;
+  var respostasDaTela = 0;        // so para teste: quantas respostas vieram pelo gancho
+
+  /* Headers, array de pares ou objeto simples -> objeto simples */
+  function copiarCabecalhos(h) {
+    var saida = {};
+    if (!h) return saida;
+    if (Array.isArray(h)) {
+      h.forEach(function (par) { saida[par[0]] = String(par[1]); });
+    } else if (typeof h.forEach === "function") {
+      h.forEach(function (valor, nome) { saida[nome] = valor; });
+    } else {
+      Object.keys(h).forEach(function (nome) { saida[nome] = String(h[nome]); });
+    }
+    return saida;
+  }
+
+  /* A tela acabou de buscar a fila: e o endereco e o token mais novos. */
+  function anotarChamadaDaTela(url, cabecalhos) {
+    try {
+      urlDaFila = new URL(url, location.href).href;
+    } catch (e) {
+      /* mantem o anterior */
+    }
+    cabecalhosDaFila = cabecalhos;
+    if (consultaSuspensa) {
+      consultaSuspensa = false;
+      agendarConsulta(INTERVALO_CONSULTA_MS);
+    }
+  }
+
+  /* Um timer so: reagendar substitui o anterior, nunca empilha. */
+  function agendarConsulta(ms) {
+    if (typeof fetchOriginal !== "function") return;
+    if (timerConsulta) clearTimeout(timerConsulta);
+    timerConsulta = setTimeout(consultarFilaAgora, ms);
+  }
+
+  function consultarFilaAgora() {
+    timerConsulta = null;
+    if (consultaEmAndamento || consultaSuspensa) return agendarConsulta(INTERVALO_CONSULTA_MS);
+    consultaEmAndamento = true;
+    function falhou() {
+      consultaEmAndamento = false;
+      agendarConsulta(ESPERA_APOS_ERRO_MS);
+    }
+    try {
+      /* fetchOriginal, nunca raiz.fetch: a nossa consulta nao passa pelo gancho */
+      fetchOriginal
+        .call(raiz, urlDaFila || location.origin + Fila.CAMINHO_DA_FILA, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          headers: cabecalhosDaFila || {},
+        })
+        .then(function (resposta) {
+          if (resposta.status === 401 || resposta.status === 403) {
+            consultaEmAndamento = false;
+            consultaSuspensa = true; // sem reagendar: a proxima busca da tela retoma
+            return;
+          }
+          if (!resposta.ok) return falhou();
+          return resposta.json().then(function (json) {
+            consultaEmAndamento = false;
+            aoResponderFila(json, "consulta");
+            agendarConsulta(INTERVALO_CONSULTA_MS);
+          });
+        })
+        .catch(falhou);
+    } catch (e) {
+      falhou();
+    }
+  }
+
   function instalarEscutaDeRede() {
-    var fetchOriginal = raiz.fetch;
+    fetchOriginal = raiz.fetch;
     if (typeof fetchOriginal === "function") {
       raiz.fetch = function (entrada, opcoes) {
         var url = typeof entrada === "string" ? entrada : (entrada && entrada.url) || "";
         var promessa = fetchOriginal.apply(this, arguments);
         if (Fila.ehChamadaDaFila(url)) {
+          try {
+            anotarChamadaDaTela(url, copiarCabecalhos((opcoes && opcoes.headers) ||
+              (typeof entrada !== "string" && entrada && entrada.headers)));
+          } catch (e) {
+            /* silencioso: anotar e reforco, nunca pode quebrar a pagina */
+          }
           promessa
             .then(function (resposta) {
               /* clone(): ler o corpo consome o stream, e consumir o
                * original deixaria a tela sem os dados dela. */
-              resposta.clone().json().then(aoResponderFila).catch(function () {});
+              resposta.clone().json().then(function (json) { aoResponderFila(json, "tela"); }).catch(function () {});
               return resposta;
             })
             .catch(function () {});
@@ -2001,10 +2090,18 @@
         this.__meedsBUrl = url;
         return abrirOriginal.apply(this, arguments);
       };
+      var cabecalhoOriginal = raiz.XMLHttpRequest.prototype.setRequestHeader;
+      if (cabecalhoOriginal) {
+        raiz.XMLHttpRequest.prototype.setRequestHeader = function (nome, valor) {
+          (this.__meedsBCabecalhos = this.__meedsBCabecalhos || {})[nome] = String(valor);
+          return cabecalhoOriginal.apply(this, arguments);
+        };
+      }
       var enviarOriginal = raiz.XMLHttpRequest.prototype.send;
       raiz.XMLHttpRequest.prototype.send = function () {
         var xhr = this;
         if (Fila.ehChamadaDaFila(xhr.__meedsBUrl)) {
+          anotarChamadaDaTela(xhr.__meedsBUrl, xhr.__meedsBCabecalhos || {});
           xhr.addEventListener("load", function () {
             try {
               if (xhr.status !== 200) return;
@@ -2013,7 +2110,7 @@
                * `response`. Ler so responseText fazia este sinal morrer em
                * silencio num app que configure o XHR assim. */
               var corpo = xhr.responseType === "json" ? xhr.response : JSON.parse(xhr.responseText);
-              aoResponderFila(corpo);
+              aoResponderFila(corpo, "tela");
             } catch (e) {
               /* silencioso */
             }
@@ -2388,6 +2485,7 @@
   function iniciar() {
     carregarConfig();
     instalarEscutaDeRede();
+    agendarConsulta(INTERVALO_CONSULTA_MS);
 
     function quandoTiverCorpo() {
       if (!document.body) return setTimeout(quandoTiverCorpo, 200);
@@ -2435,7 +2533,7 @@
     iniciar: iniciar,
     /* expostos para teste */
     _sinalizarChegada: function (o) { sinalizarChegada(o); },
-    _aoResponderFila: function (j) { aoResponderFila(j); },
+    _aoResponderFila: function (j, origem) { aoResponderFila(j, origem); },
     _estado: function () {
       return {
         tocando: tocando,
@@ -2443,6 +2541,7 @@
         alertados: alertados,
         intensidade: config && config.intensidade,
         config: config,
+        respostasDaTela: respostasDaTela,
       };
     },
     /* Exposto para o teste de reengate (o mesmo defeito da D64 do

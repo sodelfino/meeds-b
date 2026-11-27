@@ -134,7 +134,7 @@ cenario("C2: chegada com o contador fora da tela (medico na Agenda) ainda sobe p
 /* A POLITICA DOS LEMBRETES (D64 — "abstencao nao e prova de ainda cheia")
  *
  * Quem decide se um lembrete pode soar e a IDADE da ultima leitura do
- * contador: ate LIMITE_FRESCOR_CONTADOR_MS (12 s) ele toca; sem leitura
+ * contador: ate LIMITE_FRESCOR_CONTADOR_MS (40 s) ele toca; sem leitura
  * fresca, reagenda em silencio no mesmo ritmo e decide quando o medico
  * voltar a tela da fila. Nao desiste — so nao soa sem prova.
  *
