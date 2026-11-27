@@ -32,7 +32,7 @@ const path = require("path");
 const vm = require("vm");
 
 const RAIZ = path.join(__dirname, "..", "..");
-const FONTES = ["src/atencao.js", "src/som.js", "src/fila.js", "src/visual.js", "src/alarme.js"];
+const FONTES = ["src/atencao.js", "src/som.js", "src/fila.js", "src/visual.js", "src/convite.js", "src/alarme.js"];
 
 /* ---------- a tela do Meeds Doctor ---------- */
 
@@ -208,6 +208,13 @@ function criarAmbiente(opcoes) {
     notificacoes.push(this);
   }
   NotificacaoFalsa.permission = o.permissaoDeNotificacao || "granted";
+  /* ordem das chamadas que dependem de um clique "quente" (janela antes da permissao) */
+  const ordem = [];
+  NotificacaoFalsa.requestPermission = function () {
+    ordem.push("requestPermission");
+    NotificacaoFalsa.permission = o.respostaDaPermissao || "granted";
+    return Promise.resolve(NotificacaoFalsa.permission);
+  };
 
   function XHRFalso() { this._ouvintes = {}; this.status = 0; this.responseText = ""; this.response = null; }
   XHRFalso.prototype.open = function (m, u) { this._url = u; this._metodo = m; };
@@ -253,6 +260,7 @@ function criarAmbiente(opcoes) {
   class DataFalsa extends Date { static now() { return agora; } }
 
   const janelas = [];
+  let janelaBloqueada = !!o.janelaBloqueada;
   armazem["meeds-b:config"] = JSON.stringify({ intensidade: o.intensidade || "completo", janela: !!o.janela });
   /* `guardado`: preferencia ja gravada, lida pelo GM_getValue (como no
    * Tampermonkey) em vez do localStorage. O objeto e o "disco". */
@@ -286,11 +294,14 @@ function criarAmbiente(opcoes) {
     focus() {},
     screen: { width: 1920 },
     open() {
+      ordem.push("open");
+      if (janelaBloqueada) return null; // o Chrome devolve null quando bloqueia o pop-up
       const j = { closed: false, close() { j.closed = true; }, document: { open() {}, write() {}, close() {} } };
       janelas.push(j);
       return j;
     },
   };
+  if (o.navegador) ctx.navigator = o.navegador;
   if (o.guardado) {
     ctx.GM_getValue = (k, padrao) => (k in disco ? disco[k] : padrao);
     ctx.GM_setValue = (k, v) => { disco[k] = v; };
@@ -312,6 +323,9 @@ function criarAmbiente(opcoes) {
     iniciar() { ctx.MeedsB.iniciar(); },
     avancar,
     agora: () => agora,
+    ordem,
+    passoDoConvite: () => ctx.MeedsB._passoDoConvite(),
+    bloquearJanela(v) { janelaBloqueada = !!v; },
     notificacoes, sons, logs, janelas, respostasDeFetch, chamadasDeFetch,
     titulo: () => documento.title,
     estado: () => ctx.MeedsB._estado(),
@@ -383,6 +397,9 @@ function criarAmbiente(opcoes) {
       (stubDe(id)._ouvintes.click || []).forEach((f) =>
         f({ shiftKey: false, preventDefault() {}, stopPropagation() {}, target: stubDe(id) })
       );
+    },
+    teclar(id, key) {
+      (stubDe(id)._ouvintes.keydown || []).forEach((f) => f({ key, preventDefault() {}, stopPropagation() {} }));
     },
     mudarIntensidade(valor) {
       (stubDe("mb-intensidade")._ouvintes.change || []).forEach((f) => f({ target: { value: valor } }));

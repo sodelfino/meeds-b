@@ -32,6 +32,7 @@
 
   var Fila = raiz.MeedsBFila;
   var Visual = raiz.MeedsBVisual;
+  var Convite = raiz.MeedsBConvite;
   var Atencao = raiz.MeedsBAtencao;
   var SONS = raiz.MeedsBSom;
 
@@ -50,6 +51,7 @@
     volume: 70,
     intensidade: "completo",      // "silencioso" | "discreto" | "completo"
     janela: false,                // pop-up: opcional, nasce desligado
+    convite: "pendente",          // "pendente" | "visto": o convite aos avisos fora da aba aparece uma vez
   };
 
   /* ------------------------------------------------------------------
@@ -144,6 +146,7 @@
 
   var config = null;
   var shadow = null;
+  var convite = null;
   var elBotao = null;
   var elBanner = null;
   var elBarraFila = null;
@@ -231,6 +234,7 @@
       volume: Math.min(100, Math.max(0, parseInt(guardado.volume, 10) || PADRAO.volume)),
       intensidade: intensidadeGuardada,
       janela: guardado.janela === true,
+      convite: guardado.convite === "visto" ? "visto" : PADRAO.convite,
     };
   }
 
@@ -1019,6 +1023,7 @@
   var CSS = [
     ":host { all: initial; }",
     Visual.CSS,
+    Convite.CSS,
     "#mb-botao {",
     "  position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;",
     "  width: 52px; height: 52px; border-radius: 50%; border: none; cursor: pointer;",
@@ -1036,6 +1041,7 @@
     "  background: rgba(15,23,42,.55); box-shadow: 0 4px 14px rgba(0,0,0,.22);",
     "}",
     "#mb-config:hover { background: rgba(15,23,42,.78); }",
+    "#mb-botao:focus-visible, #mb-config:focus-visible { outline: 2px solid #0b7285; outline-offset: 2px; }",
     "#mb-banner {",
     "  position: fixed; top: 0; left: 0; right: 0; z-index: 2147483001;",
     "  display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap;",
@@ -1129,12 +1135,12 @@
       '  <span id="mb-fila-mudou-texto"></span>' +
       '  <button type="button" id="mb-atualizar-fila">Atualizar fila</button>' +
       "</div>" +
-      '<button type="button" id="mb-botao" title="Alarme de fila"></button>' +
+      '<button type="button" id="mb-botao" title="Alarme de fila" aria-label="Alarme de fila"></button>' +
       /* Sino sozinho so cicla intensidade (clique) ou abre os ajustes por
        * um gesto escondido (botao direito / shift+clique) — sem um jeito
        * visivel, quem nao conhece o gesto acha que "clicar nao funciona".
        * A engrenagem e so isso: um caminho obvio para a mesma tela. */
-      '<button type="button" id="mb-config" title="Configurar Alarme de fila">⚙️</button>' +
+      '<button type="button" id="mb-config" title="Configurar Alarme de fila" aria-label="Configurar Alarme de fila">⚙️</button>' +
       '<div id="mb-painel" hidden>' +
       '  <div id="mb-cabecalho"></div>' +
       '  <label for="mb-intensidade">Quanto ele deve incomodar</label>' +
@@ -1151,9 +1157,11 @@
       '    <input type="checkbox" id="mb-janela" /> Abrir uma janela de aviso' +
       "  </label>" +
       '  <div class="mb-dica" id="mb-janela-dica"></div>' +
+      '  <button type="button" class="acao" id="mb-convite-abrir">Configurar avisos fora da aba</button>' +
       '  <div id="mb-estado"></div>' +
       '  <button type="button" class="acao" id="mb-liberar" hidden>Ativar avisos do sistema</button>' +
       "</div>" +
+      '<div id="mb-convite" role="dialog" aria-labelledby="mb-convite-titulo" hidden></div>' +
       '<div id="mb-cartao" hidden>' +
       '  <div id="mb-cartao-titulo"></div>' +
       '  <div id="mb-cartao-corpo"></div>' +
@@ -1170,6 +1178,11 @@
     elPainel = shadow.getElementById("mb-painel");
     desenharCabecalho();
     elCartao = shadow.getElementById("mb-cartao");
+    convite = Convite.criar({ shadow: shadow, Atencao: Atencao, aoConcluir: aoConcluirConvite });
+    shadow.getElementById("mb-convite-abrir").addEventListener("click", function () {
+      elPainel.hidden = true;
+      convite.abrir();
+    });
     var elConfig = shadow.getElementById("mb-config");
 
     var sel = shadow.getElementById("mb-som");
@@ -1260,6 +1273,20 @@
     });
 
     refletir();
+    /* O convite espera 3 s: o medico acabou de abrir a pagina e o painel de
+     * avisos nao pode competir com ela. No silencioso nao convida: quem
+     * escolheu nao ser avisado nao quer pergunta sobre avisos. */
+    setTimeout(function () {
+      if (config.convite === "pendente" && config.intensidade !== "silencioso") convite.abrir();
+    }, 3000);
+  }
+
+  /* Grava o que o convite decidiu; `janela` so vem quando ele decidiu sobre ela. */
+  function aoConcluirConvite(r) {
+    if (typeof r.janela === "boolean") config.janela = r.janela;
+    if (r.visto) config.convite = "visto";
+    gravar();
+    refletirJanela();
   }
 
   /* O subtitulo diz a intensidade atual, entao o cabecalho e redesenhado
@@ -1298,6 +1325,7 @@
     if (!elBotao) return;
     var modo = intensidadeAtual();
     elBotao.innerHTML = Visual.sino(config.intensidade);
+    elBotao.setAttribute("aria-label", "Alarme de fila: modo " + modo.rotulo.toLowerCase());
     elBotao.className = config.intensidade === "silencioso" ? "desligado" : "ligado";
     elBotao.title =
       "Alarme: " + modo.rotulo + " — " + modo.resumo +
@@ -1463,6 +1491,7 @@
     /* expostos para teste */
     _sinalizarChegada: function (o) { sinalizarChegada(o); },
     _aoResponderFila: function (j, origem) { aoResponderFila(j, origem); },
+    _passoDoConvite: function () { return convite ? convite.passo() : null; },
     _estado: function () {
       return {
         tocando: tocando,
