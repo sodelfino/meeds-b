@@ -65,7 +65,7 @@ Escopo: **só o alarme**. Os outros módulos do Assistente Meeds (A) não entram
 
 - Intervalo da consulta: 15 s; frescor aceito para o lembrete: 40 s.
 - Erro 401/403: para de consultar até a tela fazer uma nova chamada à fila
-  (token novo). Outro erro: espera 60 s e tenta de novo.
+  (token novo). Outro erro: espera 30 s e tenta de novo (era 60 s; baixado na revisão final por ser maior que o frescor de 40 s).
 - Migração do som: quem está nos padrões antigos (`sirene-classica`,
   `toque-duplo`) passa para os novos uma vez; quem escolheu outro som mantém.
 - Tempo de espera contado a partir da primeira vez que o script viu o
