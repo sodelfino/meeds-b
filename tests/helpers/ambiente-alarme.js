@@ -32,7 +32,7 @@ const path = require("path");
 const vm = require("vm");
 
 const RAIZ = path.join(__dirname, "..", "..");
-const FONTES = ["src/atencao.js", "src/som.js", "src/fila.js", "src/visual.js", "src/convite.js", "src/alarme.js"];
+const FONTES = ["src/atencao.js", "src/som.js", "src/fila.js", "src/atualizacao.js", "src/visual.js", "src/convite.js", "src/alarme.js"];
 
 /* ---------- a tela do Meeds Doctor ---------- */
 
@@ -252,7 +252,17 @@ function criarAmbiente(opcoes) {
     if (sinal) sinal.addEventListener("abort", () => aoRejeitar.forEach((r) => r(new Error("AbortError"))));
     return p;
   }
+  /* o .meta.js da verificacao de atualizacao tem fila propria (por URL), para
+   * nunca consumir as respostas da consulta da fila: {status, texto} ou "pendurar" */
+  const respostasDeMeta = [];
+  const chamadasDeMeta = [];
   function fetchFalso(url, opcoes) {
+    if (/\.meta\.js(\?|$)/.test(String(url))) {
+      chamadasDeMeta.push({ url, opcoes });
+      const m = respostasDeMeta.shift();
+      if (!m || m === "pendurar") return pendurado(opcoes && opcoes.signal);
+      return resolvido({ status: m.status, ok: m.status >= 200 && m.status < 300, text() { return resolvido(m.texto); } });
+    }
     chamadasDeFetch.push({ url, opcoes });
     const r = respostasDeFetch.shift();
     if (!r || r === "pendurar") return pendurado(opcoes && opcoes.signal);
@@ -267,6 +277,7 @@ function criarAmbiente(opcoes) {
   class DataFalsa extends Date { static now() { return agora; } }
 
   const janelas = [];
+  const aberturas = [];
   let recargas = 0;
   let janelaBloqueada = !!o.janelaBloqueada;
   armazem["meeds-b:config"] = JSON.stringify({ intensidade: o.intensidade || "completo", janela: !!o.janela });
@@ -303,8 +314,9 @@ function criarAmbiente(opcoes) {
     MutationObserver: function (cb) { aoMutar = cb; this.observe = () => {}; this.disconnect = () => {}; },
     focus() {},
     screen: { width: 1920 },
-    open() {
+    open(url) {
       ordem.push("open");
+      aberturas.push(url);
       if (janelaBloqueada) return null; // o Chrome devolve null quando bloqueia o pop-up
       const j = { closed: false, close() { j.closed = true; }, document: { open() {}, write() {}, close() {} } };
       janelas.push(j);
@@ -316,6 +328,7 @@ function criarAmbiente(opcoes) {
     ctx.GM_getValue = (k, padrao) => (k in disco ? disco[k] : padrao);
     ctx.GM_setValue = (k, v) => { disco[k] = v; };
   }
+  ctx.MeedsBVersao = o.versao || "1.6.0";
   ctx.window = ctx;
   ctx.globalThis = ctx;
   vm.createContext(ctx);
@@ -337,7 +350,8 @@ function criarAmbiente(opcoes) {
     passoDoConvite: () => ctx.MeedsB._passoDoConvite(),
     recargas: () => recargas,
     bloquearJanela(v) { janelaBloqueada = !!v; },
-    notificacoes, sons, logs, janelas, respostasDeFetch, chamadasDeFetch,
+    notificacoes, sons, logs, janelas, respostasDeFetch, chamadasDeFetch, respostasDeMeta, chamadasDeMeta,
+    janelasAbertas: () => aberturas,
     titulo: () => documento.title,
     estado: () => ctx.MeedsB._estado(),
     config: () => ctx.MeedsB._estado().config,

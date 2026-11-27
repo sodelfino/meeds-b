@@ -33,6 +33,7 @@
   var Fila = raiz.MeedsBFila;
   var Visual = raiz.MeedsBVisual;
   var Convite = raiz.MeedsBConvite;
+  var Atualizacao = raiz.MeedsBAtualizacao;
   var Atencao = raiz.MeedsBAtencao;
   var SONS = raiz.MeedsBSom;
 
@@ -152,6 +153,7 @@
   var elMoldura = null;
   var elPainel = null;
   var elCartao = null;
+  var elAtualizacao = null;
 
   var audioCtx = null;
   var tocando = false;
@@ -885,6 +887,9 @@
    * e por definicao a fila do medico logado. Nenhum outro dado e pedido.
    * ------------------------------------------------------------------ */
   var INTERVALO_CONSULTA_MS = 15000;
+  /* o clique no sino so consulta a versao publicada a cada 30 min (em memoria) */
+  var INTERVALO_VERIFICAR_ATUALIZACAO_MS = 30 * 60000;
+  var ultimaVerificacaoEm = null;
   /* menor que o frescor (40 s): um erro so nao pode calar o lembrete seguinte */
   var ESPERA_APOS_ERRO_MS = 30000;
   /* rede presa (Wi-Fi trocando, notebook acordando) nunca termina sozinha */
@@ -1086,6 +1091,21 @@
     ":host { all: initial; }",
     Visual.CSS,
     Convite.CSS,
+    /* acima do sino, embaixo a direita; abaixo do painel (z-index) para ele cobrir o cartao, nunca o contrario */
+    "#mb-atualizacao {",
+    "  position: fixed; right: 20px; bottom: 90px; z-index: 2147483001; width: 320px; max-width: calc(100vw - 40px);",
+    "  background: #fff; color: #1f2a37; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,.3);",
+    "  font: 400 13.5px/1.5 system-ui, sans-serif; overflow: hidden;",
+    "}",
+    "#mb-atualizacao[hidden] { display: none; }",
+    "#mb-atualizacao p { margin: 0; padding: 14px 18px 4px; }",
+    "#mb-atualizacao .mb-atu-botoes { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 18px 16px; }",
+    "#mb-atualizacao button.mb-atu-bt {",
+    "  border: none; border-radius: 10px; padding: 9px 14px; font: 600 13px system-ui, sans-serif;",
+    "  cursor: pointer; background: #f1f3f5; color: #1f2a37;",
+    "}",
+    "#mb-atualizacao button.mb-atu-bt.principal { background: #0b7285; color: #fff; }",
+    "#mb-atualizacao button.mb-atu-bt:focus-visible { outline: 2px solid #0b7285; outline-offset: 2px; }",
     "#mb-botao {",
     "  position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;",
     "  width: 52px; height: 52px; border-radius: 50%; border: none; cursor: pointer;",
@@ -1224,6 +1244,7 @@
       '  <button type="button" class="acao" id="mb-liberar" hidden>Ativar avisos do sistema</button>' +
       "</div>" +
       '<div id="mb-convite" role="dialog" aria-labelledby="mb-convite-titulo" hidden></div>' +
+      '<div id="mb-atualizacao" role="dialog" aria-labelledby="mb-atualizacao-titulo" hidden></div>' +
       '<div id="mb-cartao" hidden>' +
       '  <div id="mb-cartao-titulo"></div>' +
       '  <div id="mb-cartao-corpo"></div>' +
@@ -1242,6 +1263,10 @@
     elPainel = shadow.getElementById("mb-painel");
     desenharCabecalho();
     elCartao = shadow.getElementById("mb-cartao");
+    elAtualizacao = shadow.getElementById("mb-atualizacao");
+    elAtualizacao.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") fecharAtualizacao();
+    });
     convite = Convite.criar({ shadow: shadow, Atencao: Atencao, aoConcluir: aoConcluirConvite });
     shadow.getElementById("mb-convite-abrir").addEventListener("click", function () {
       elPainel.hidden = true;
@@ -1260,6 +1285,7 @@
       /* Aproveita o gesto para destravar o audio: o navegador so deixa
        * tocar som depois de uma interacao do usuario. */
       contexto();
+      verificarAtualizacao();
       var i = ORDEM_INTENSIDADE.indexOf(config.intensidade);
       config.intensidade = ORDEM_INTENSIDADE[(i + 1) % ORDEM_INTENSIDADE.length];
       if (config.intensidade === "silencioso" && tocando) silenciarAlarme();
@@ -1365,6 +1391,42 @@
     });
     shadow.getElementById("mb-fechar").addEventListener("click", function () {
       elPainel.hidden = true;
+    });
+  }
+
+  function fecharAtualizacao() {
+    elAtualizacao.hidden = true;
+    elAtualizacao.innerHTML = "";
+  }
+
+  function mostrarAtualizacao(nova, atual, instalar) {
+    elAtualizacao.innerHTML =
+      Visual.cabecalho({ titulo: "Nova versão do alarme", idFechar: "mb-atualizacao-fechar" })
+        .replace("<h2>", '<h2 id="mb-atualizacao-titulo">') +
+      "<p>A versão " + nova + " está disponível (você usa a " + atual + ").</p>" +
+      '<div class="mb-atu-botoes">' +
+      '<button type="button" class="mb-atu-bt principal" id="mb-atualizar">Atualizar agora</button>' +
+      '<button type="button" class="mb-atu-bt" id="mb-atualizacao-depois">Depois</button></div>';
+    elAtualizacao.hidden = false;
+    shadow.getElementById("mb-atualizacao-fechar").addEventListener("click", fecharAtualizacao);
+    shadow.getElementById("mb-atualizacao-depois").addEventListener("click", fecharAtualizacao);
+    shadow.getElementById("mb-atualizar").addEventListener("click", function () {
+      raiz.open(instalar, "_blank"); // o Tampermonkey/Userscripts mostra a tela de atualizacao
+      fecharAtualizacao();
+    });
+    var foco = shadow.getElementById("mb-atualizar");
+    if (foco && foco.focus) foco.focus();
+  }
+
+  /* No clique do sino, no maximo a cada 30 min; sem versao nova nada aparece. */
+  function verificarAtualizacao() {
+    if (!Atualizacao || !raiz.MeedsBVersao) return;
+    var agora = Date.now();
+    if (ultimaVerificacaoEm !== null && agora - ultimaVerificacaoEm < INTERVALO_VERIFICAR_ATUALIZACAO_MS) return;
+    ultimaVerificacaoEm = agora;
+    var variante = typeof GM_getValue === "function" ? "tampermonkey" : "safari";
+    Atualizacao.verificar(raiz.MeedsBVersao, variante, function (r) {
+      if (r.nova) mostrarAtualizacao(r.versao, raiz.MeedsBVersao, r.instalar);
     });
   }
 

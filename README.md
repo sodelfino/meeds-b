@@ -237,6 +237,14 @@ faria o alarme nunca parar.
 Desenhar em cima do que se observou, e não do que se imagina, é o que separa um
 alarme que funciona de um que só parece funcionar.
 
+### Atualização
+
+Ao clicar no sino, o alarme confere se existe versão mais nova (lê só o
+cabeçalho `.meta.js` publicado, no máximo uma vez a cada 30 minutos). Se estiver
+em dia, não aparece nada. Se houver versão nova, um cartão acima do sino pergunta
+"Atualizar agora?"; o botão abre a tela de atualização do Tampermonkey (ou do app
+Userscripts, no iPad) — quem confirma é você.
+
 ## Privacidade
 
 - **O nome do paciente nunca é guardado, registrado, exibido nem enviado**, em

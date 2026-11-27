@@ -21,7 +21,7 @@ const pacote = JSON.parse(fs.readFileSync(path.join(RAIZ, "package.json"), "utf8
 
 /* Ordem importa: atencao e som nao dependem de ninguem; fila nao depende
  * de ninguem; visual nao depende de ninguem; alarme depende dos quatro. */
-const FONTES = ["src/atencao.js", "src/som.js", "src/fila.js", "src/visual.js", "src/convite.js", "src/alarme.js"];
+const FONTES = ["src/atencao.js", "src/som.js", "src/fila.js", "src/atualizacao.js", "src/visual.js", "src/convite.js", "src/alarme.js"];
 
 const CABECALHO = `// ==UserScript==
 // @name         Meeds B — Alarme de fila
@@ -56,6 +56,7 @@ function construir() {
 /* ===== partida ===== */
 (function (raiz) {
   "use strict";
+  raiz.MeedsBVersao = "${pacote.version}";
   raiz.MeedsB.iniciar();
 })(typeof unsafeWindow !== "undefined" ? unsafeWindow : window);
 `;
