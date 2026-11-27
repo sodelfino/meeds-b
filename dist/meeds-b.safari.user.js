@@ -1190,7 +1190,27 @@
     return total;
   }
 
+  /* Chegada de cada consulta, so no formato observado (lista de
+   * { queue, items }); qualquer outro devolve []. checkedInAt e o ISO do
+   * servidor; invalido ou ausente -> chegadaMs null. */
+  function chegadasDaFila(json) {
+    var saida = [];
+    if (!Array.isArray(json)) return saida;
+    for (var i = 0; i < json.length; i++) {
+      var f = json[i];
+      if (!f || typeof f !== "object" || !f.queue || !Array.isArray(f.items)) continue;
+      for (var j = 0; j < f.items.length; j++) {
+        var chave = chaveDoItem(f.items[j]);
+        if (chave === null) continue;
+        var ms = Date.parse(f.items[j].checkedInAt);
+        saida.push({ id: chave, chegadaMs: isNaN(ms) ? null : ms });
+      }
+    }
+    return saida;
+  }
+
   raiz.MeedsBFila = {
+    chegadasDaFila: chegadasDaFila,
     lerContadorAguardando: lerContadorAguardando,
     lerOrigemDoUltimoPaciente: lerOrigemDoUltimoPaciente,
     observarToast: observarToast,
@@ -1321,14 +1341,26 @@
 
   var DEBOUNCE_MS = 2500;         // dois sinais da mesma chegada = um alarme
   var DURACAO_MAX_SOM_MS = 120000; // trava: a sirene nunca toca para sempre
-  var REENGATE_MS = 300000;        // silenciar sem atender: volta em 5 min
+  var REENGATE_MS = 60000;         // silenciar sem atender: volta em 1 min
   var INTERVALO_DOM_MS = 4000;
   var DURACAO_CARTAO_MS = 12000;   // quanto o cartao do Discreto fica na tela
   /* Discreto: se o paciente que disparou o alarme continuar na fila, o
    * cartao e as duas batidas voltam a cada 2 min — mais curto que o
    * reengate do Completo (5 min) porque o Discreto e pensado para lembrar
    * com frequencia, sem interromper. Ver agendarRepiqueDeEsperaDiscreto(). */
-  var INTERVALO_REPIQUE_DISCRETO_MS = 2 * 60000;
+  var INTERVALO_REPIQUE_DISCRETO_MS = 60000;
+  /* espera do mais antigo a partir da qual o Discreto sobe um degrau (faixa + moldura) */
+  var DEGRAU_ESPERA_MS = 300000;
+  /* id da consulta -> ms de quando entrou na fila; so memoria, nunca disco */
+  var vistoDesde = {};
+
+  function esperaDoMaisAntigoMs() {
+    var menor = null;
+    Object.keys(vistoDesde).forEach(function (id) {
+      if (menor === null || vistoDesde[id] < menor) menor = vistoDesde[id];
+    });
+    return menor === null ? null : Date.now() - menor;
+  }
   /* A MESMA chegada chega por caminhos que nao chegam juntos: o toast, o
    * contador (lido de 4 em 4 s) e, na navegacao, a rede. Dentro desta
    * janela, um sinal que nao traz NENHUM paciente alem dos que ja foram
@@ -1497,6 +1529,8 @@
       var min = Math.floor((Date.now() - chegadaEm) / 60000);
       if (min >= 1) partes.push("tocando há " + min + " min");
     }
+    var espera = esperaDoMaisAntigoMs();
+    if (espera !== null && espera >= 60000) partes.push("o mais antigo há " + Math.floor(espera / 60000) + " min");
     return partes.join(" · ") || "Novo paciente na fila";
   }
 
@@ -1576,7 +1610,9 @@
     /* Faixa e moldura so no modo completo. No discreto o aviso e o cartao
      * mais o som curto (duas vezes) mais a escada de atencao; no
      * silencioso, so a escada. */
-    if (modo.banner) {
+    var degrau = motivoAtual === "ainda-aguardando" && modo.som === "curto" &&
+      (esperaDoMaisAntigoMs() || 0) >= DEGRAU_ESPERA_MS;
+    if (modo.banner || degrau) {
       atualizarBanner();
       if (elBanner) elBanner.hidden = false;
       if (elMoldura) elMoldura.hidden = false;
@@ -1694,7 +1730,11 @@
     ultimoContador = 0;
     if (timeoutReengate) { clearTimeout(timeoutReengate); timeoutReengate = null; }
     cancelarRepique();
+    vistoDesde = {};
     if (tocando) silenciarAlarme();
+    /* o degrau do Discreto deixa a faixa acesa depois do ciclo curto */
+    if (elBanner) elBanner.hidden = true;
+    if (elMoldura) elMoldura.hidden = true;
     marcarAtencao(false); // com 0, limpa titulo, favicone e janela
   }
 
@@ -1933,6 +1973,16 @@
       total = Fila.contagemDaFila(json); // null = "nao sei", nunca "zero"
     } catch (e) {
       total = null;
+    }
+
+    /* so formato reconhecido mexe na espera: "nao sei" nao apaga ninguem */
+    if (total !== null) {
+      var agoraMs = Date.now();
+      var vistoAgora = {};
+      Fila.chegadasDaFila(json).forEach(function (c) {
+        vistoAgora[c.id] = vistoDesde[c.id] || (c.chegadaMs !== null ? c.chegadaMs : agoraMs);
+      });
+      vistoDesde = vistoAgora;
     }
 
     var tinhaBase = idsVistos !== null;

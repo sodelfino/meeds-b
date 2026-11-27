@@ -340,7 +340,27 @@
     return total;
   }
 
+  /* Chegada de cada consulta, so no formato observado (lista de
+   * { queue, items }); qualquer outro devolve []. checkedInAt e o ISO do
+   * servidor; invalido ou ausente -> chegadaMs null. */
+  function chegadasDaFila(json) {
+    var saida = [];
+    if (!Array.isArray(json)) return saida;
+    for (var i = 0; i < json.length; i++) {
+      var f = json[i];
+      if (!f || typeof f !== "object" || !f.queue || !Array.isArray(f.items)) continue;
+      for (var j = 0; j < f.items.length; j++) {
+        var chave = chaveDoItem(f.items[j]);
+        if (chave === null) continue;
+        var ms = Date.parse(f.items[j].checkedInAt);
+        saida.push({ id: chave, chegadaMs: isNaN(ms) ? null : ms });
+      }
+    }
+    return saida;
+  }
+
   raiz.MeedsBFila = {
+    chegadasDaFila: chegadasDaFila,
     lerContadorAguardando: lerContadorAguardando,
     lerOrigemDoUltimoPaciente: lerOrigemDoUltimoPaciente,
     observarToast: observarToast,

@@ -59,10 +59,10 @@ cenario("I4: quem ja esperava ao ligar nao toca agora, mas tambem nao e esquecid
    * fila nao pode dar sirene — mas tambem nao pode apagar o paciente da
    * memoria do alarme: sem timer nenhum, ele esperaria para sempre. */
   const A = ligar({ intensidade: "completo", tela: telaFila(1, PAC) });
-  A.avancar(4 * MIN);
-  ok("nada tocou nos primeiros minutos", A.sons.length === 0, String(A.sons.length));
-  A.avancar(2 * MIN);
-  ok("o lembrete de 5 min chega", A.sons.length > 0, String(A.sons.length));
+  A.avancar(50 * SEG);
+  ok("nada tocou no primeiro minuto", A.sons.length === 0, String(A.sons.length));
+  A.avancar(30 * SEG);
+  ok("o lembrete de 1 min chega", A.sons.length > 0, String(A.sons.length));
   ok("e se apresenta como lembrete, nao como chegada",
      /ainda aguardando/i.test(A.ui("mb-banner-titulo").textContent), A.ui("mb-banner-titulo").textContent);
 });
@@ -83,20 +83,20 @@ cenario("Discreto: chegada mostra o cartao com cidade e contagem, e toca duas ve
   ok("nao e a faixa do modo completo", !A.bannerVisivel());
 });
 
-cenario("C3: Discreto volta a cada 2 min enquanto o paciente continua esperando", () => {
+cenario("C3: Discreto volta a cada 1 min enquanto o paciente continua esperando", () => {
   const A = ligar({ intensidade: "discreto" });
   A.mostrarTela(telaFila(1, PAC));
   A.toast();
   const t0 = A.agora();
-  A.avancar(61 * SEG);
-  ok("com 1 min ainda so as 2 batidas da chegada", A.sons.length === 2, String(A.sons.length));
-  A.avancar(61 * SEG);
-  const aos2 = A.sons.filter((s) => s.t - t0 >= 115 * SEG && s.t - t0 <= 135 * SEG).length;
-  ok("aos 2 min o lembrete toca de novo (2 batidas)", aos2 === 2, aos2 + " batidas");
+  A.avancar(30 * SEG);
+  ok("com 30 s ainda so as 2 batidas da chegada", A.sons.length === 2, String(A.sons.length));
+  A.avancar(45 * SEG);
+  const aos1 = A.sons.filter((s) => s.t - t0 >= 55 * SEG && s.t - t0 <= 75 * SEG).length;
+  ok("aos 1 min o lembrete toca de novo (2 batidas)", aos1 === 2, aos1 + " batidas");
   ok("e o cartao diz que ele AINDA espera", /ainda aguardando/i.test(A.cartao().titulo), A.cartao().titulo);
-  A.avancar(2 * MIN);
-  const aos4 = A.sons.filter((s) => s.t - t0 >= 235 * SEG && s.t - t0 <= 255 * SEG).length;
-  ok("e continua: novo lembrete aos 4 min", aos4 === 2, aos4 + " batidas");
+  A.avancar(MIN);
+  const aos2 = A.sons.filter((s) => s.t - t0 >= 115 * SEG && s.t - t0 <= 135 * SEG).length;
+  ok("e continua: novo lembrete aos 2 min", aos2 === 2, aos2 + " batidas");
 });
 
 cenario("Discreto: se a fila esvazia antes do lembrete, ele nao toca", () => {
@@ -163,7 +163,7 @@ cenario("C2c/D64: Discreto sem contador legivel — o repique espera leitura fre
   A.avancar(2 * MIN + 10 * SEG);
   ok("so as 2 batidas da chegada: repique nao toca sem leitura", A.sons.length === 2, String(A.sons.length));
   A.mostrarTela(telaFila(1, PAC));
-  A.avancar(2 * MIN + 10 * SEG);
+  A.avancar(70 * SEG);
   ok("com a fila de volta a tela, o repique toca", A.sons.length === 4, String(A.sons.length));
 });
 
@@ -328,7 +328,7 @@ cenario("duas chegadas de verdade, separadas por tempo, sao dois alarmes", () =>
 
 /* ---------------- regressao do que ja funcionava ---------------- */
 
-cenario("Completo: sirene repete, para no teto de 120 s e volta em 5 min se ainda ha fila", () => {
+cenario("Completo: sirene repete, para no teto de 120 s e volta em 1 min se ainda ha fila", () => {
   const A = ligar({ intensidade: "completo" });
   A.mostrarTela(telaFila(1, PAC));
   A.toast();
@@ -338,20 +338,20 @@ cenario("Completo: sirene repete, para no teto de 120 s e volta em 5 min se aind
   A.avancar(115 * SEG);
   ok("parou no teto de 120 s", !A.estado().tocando && !A.bannerVisivel());
   const n = A.sons.length;
-  A.avancar(60 * SEG);
+  A.avancar(30 * SEG);
   ok("silencio entre o teto e o reengate", A.sons.length === n);
-  A.avancar(250 * SEG);
+  A.avancar(40 * SEG);
   ok("o reengate toca e a faixa volta", A.sons.length > n && A.bannerVisivel());
 });
 
-cenario("Silenciar: volta em 5 min se ainda ha fila", () => {
+cenario("Silenciar: volta em 1 min se ainda ha fila", () => {
   const A = ligar({ intensidade: "completo" });
   A.mostrarTela(telaFila(1, PAC));
   A.toast();
   A.clicar("mb-silenciar");
   ok("silenciou", !A.estado().tocando && !A.bannerVisivel());
   const n = A.sons.length;
-  A.avancar(5 * MIN + 10 * SEG);
+  A.avancar(70 * SEG);
   ok("voltou a tocar", A.sons.length > n, A.sons.length - n + " toques");
 });
 
@@ -407,7 +407,7 @@ cenario("Silencioso: o lembrete de 5 min continua existindo", () => {
   A.foraDaAba(true);
   A.mostrarTela(telaFila(1, PAC));
   A.toast();
-  A.avancar(5 * MIN + 10 * SEG);
+  A.avancar(70 * SEG);
   ok("notificou de novo", A.notificacoes.length >= 2, String(A.notificacoes.length));
 });
 

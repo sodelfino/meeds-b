@@ -36,7 +36,7 @@ function ok(nome, cond, obs) {
 }
 
 const RAIZ = path.join(__dirname, "..");
-const REENGATE_MS = 5 * 60000;
+const REENGATE_MS = 60000;
 const DURACAO_MAX_SOM_MS = 120000;
 
 function carregar() {

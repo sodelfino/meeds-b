@@ -137,5 +137,77 @@ cenario("a consulta propria nao passa pelo gancho", () => {
   ok("o gancho nao viu a consulta", A.estado().respostasDaTela === 1, String(A.estado().respostasDaTela));
 });
 
+/* Avanca em passos de 15 s e responde a cada consulta com corpo() */
+function avancarConsultando(A, ms, corpo) {
+  for (let t = 0; t < ms; t += 15 * SEG) {
+    A.respostasDeFetch.push({ status: 200, corpo: corpo() });
+    A.avancar(15 * SEG);
+  }
+}
+const UM = () => filaReal([{ c: "c1" }]);
+/* Discreto fora do PA, 1 paciente ja na fila quando a consulta comeca */
+function discretoForaDoPA() {
+  const A = ligar({ intensidade: "discreto", tela: telaSemContador() });
+  A.appBuscaFila(filaReal([]));
+  avancarConsultando(A, 15 * SEG, () => filaReal([]));
+  avancarConsultando(A, 15 * SEG, UM); // chegada: som duplo
+  A.avancar(4 * SEG);                  // a segunda batida
+  return A;
+}
+
+cenario("discreto lembra a cada 1 min fora do PA", () => {
+  const A = discretoForaDoPA();
+  const base = A.sons.length;
+  ok("a chegada tocou", base === 2, String(base));
+  avancarConsultando(A, 60 * SEG, UM);
+  ok("+1 som aos 60 s", A.sons.length === base + 2, String(A.sons.length - base));
+  avancarConsultando(A, 60 * SEG, UM);
+  ok("+1 som aos 120 s", A.sons.length === base + 4, String(A.sons.length - base));
+});
+
+cenario("aviso traz a espera do mais antigo", () => {
+  const A = discretoForaDoPA();
+  avancarConsultando(A, 4 * 60 * SEG, UM);
+  const txt = A.cartao().titulo + " | " + A.motivoDoBanner() + " | " + A.cartao().linhas.join(" | ");
+  ok("diz o mais antigo ha 4 min", /o mais antigo há 4 min/.test(txt), txt);
+});
+
+cenario("checkedInAt de 7 min atras ja aparece como 7 min", () => {
+  const A = ligar({ intensidade: "completo", tela: telaSemContador() });
+  A.appBuscaFila(filaReal([]));
+  const em = new Date(A.agora() - 7 * 60 * SEG).toISOString();
+  A.respostasDeFetch.push({ status: 200, corpo: filaReal([{ c: "c1", em }]) });
+  A.avancar(ATE_A_PRIMEIRA);
+  ok("7 min", /o mais antigo há 7 min/.test(A.motivoDoBanner()), A.motivoDoBanner());
+});
+
+cenario("degrau aos 5 min no discreto", () => {
+  const A = discretoForaDoPA();
+  avancarConsultando(A, 4 * 60 * SEG, UM);
+  ok("antes do degrau sem faixa", !A.bannerVisivel());
+  avancarConsultando(A, 60 * SEG, UM);
+  ok("aos 5 min a faixa aparece", A.bannerVisivel());
+  A.respostasDeFetch.push({ status: 200, corpo: filaReal([]) });
+  A.avancar(ATE_A_PRIMEIRA);
+  ok("fila vazia apaga a faixa", !A.bannerVisivel());
+});
+
+cenario("formato desconhecido nao toca nem desiste", () => {
+  const A = discretoForaDoPA();
+  const base = A.sons.length;
+  avancarConsultando(A, 180 * SEG, () => ({ outra: "coisa" }));
+  ok("nenhum som", A.sons.length === base, String(A.sons.length - base));
+  avancarConsultando(A, 60 * SEG, UM);
+  ok("voltando ao formato real, soa no proximo minuto", A.sons.length > base, String(A.sons.length - base));
+});
+
+cenario("silencioso continua mudo", () => {
+  const A = ligar({ intensidade: "silencioso", tela: telaSemContador() });
+  A.appBuscaFila(filaReal([]));
+  avancarConsultando(A, 15 * SEG, () => filaReal([]));
+  avancarConsultando(A, 300 * SEG, UM);
+  ok("nenhum som", A.sons.length === 0, String(A.sons.length));
+});
+
 console.log(falhas ? "\n" + falhas + " FALHA(S)" : "\ntodos passaram");
 process.exit(falhas ? 1 : 0);

@@ -74,7 +74,7 @@ function telaSemContador(titulo) {
 }
 
 /* O corpo real de /api/doctor/queues/mine (formato observado em 14/10).
- * itens = [{ c: consultationId, p: patient.id }] — vao na fila "Teste". */
+ * itens = [{ c: consultationId, p: patient.id, em: checkedInAt ISO }] — vao na fila "Teste". */
 function filaReal(itens) {
   const lista = itens || [];
   return [
@@ -87,6 +87,7 @@ function filaReal(itens) {
                        patient: { name: "NOME QUE NUNCA PODE VAZAR", locality: {} } };
         if (i.c) item.consultationId = i.c;
         if (i.p) item.patient.id = i.p;
+        if (i.em) item.checkedInAt = i.em;
         return item;
       }),
       stats: { waiting: lista.length, inProgress: 0, completedToday: 0, avgDurationMinutes: 0 } },
