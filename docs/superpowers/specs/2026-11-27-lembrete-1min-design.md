@@ -85,3 +85,21 @@ Escopo: **só o alarme**. Os outros módulos do Assistente Meeds (A) não entram
 - Cada consulta traz `checkedInAt` (hora da chegada no servidor). Quando o item da fila
   trouxer esse campo, o tempo de espera usa ele; "primeira vez visto" fica de reserva.
 - Depois de "Finalizar atendimento" o próprio app busca a fila de novo.
+
+## Gravação Jam de hoje (27/11) — correções ao adendo
+
+- O item da fila (`/queues/mine`) traz `consultationId`, `priority`, `tenantId`,
+  **`waitingSince`** (hora em que entrou na fila) e `patient { id, name, locality }`.
+  `checkedInAt` é campo da *consulta* (resposta do claim), não do item da fila: o
+  tempo de espera usa **`waitingSince`**, com `checkedInAt` só como reserva.
+- A API responde `access-control-allow-origin: *` e autentica pelo cabeçalho
+  `authorization`. Portanto a consulta própria **não** pode usar
+  `credentials: "include"` (o navegador bloquearia): espelha o modo do app
+  (XHR sem `withCredentials` → `same-origin`).
+- Limite de taxa da API: 600 requisições por 60 s. A consulta de 15 s (4/min) é
+  irrelevante para esse limite.
+- O app continua **sem** atualizar a fila sozinho: `/queues/mine` só é chamado ao
+  clicar no menu. Na gravação, um paciente ficou mais de 1 min esperando sem nada
+  mudar na tela.
+- `patient.locality` traz a cidade; fica para depois trocar a leitura da cidade do
+  cartão Discreto (hoje pelo selo da tela) por esse campo.
