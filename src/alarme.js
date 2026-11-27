@@ -1043,9 +1043,10 @@
     "}",
     "#mb-banner[hidden], #mb-moldura[hidden], #mb-painel[hidden], #mb-fila-mudou[hidden] { display: none; }",
     "#mb-fila-mudou {",
-    "  position: fixed; top: 0; left: 0; right: 0; z-index: 2147483001;",
-    "  display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap;",
-    "  padding: 10px 18px; color: #fff; font: 600 15px system-ui, sans-serif; background: #1e40af;",
+    /* embaixo e a esquerda: o topo e do banner do alarme (com o "Silenciar"), e o canto direito do sino e da engrenagem */
+    "  position: fixed; bottom: 20px; left: 20px; max-width: calc(100vw - 170px); z-index: 2147483001;",
+    "  display: flex; align-items: center; gap: 14px; flex-wrap: wrap; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.3);",
+    "  padding: 10px 16px; color: #fff; font: 600 15px system-ui, sans-serif; background: #1e40af;",
     "}",
     "#mb-fila-mudou button {",
     "  background: rgba(255,255,255,.2); border: 1.5px solid rgba(255,255,255,.75); color: #fff;",

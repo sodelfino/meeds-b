@@ -247,6 +247,14 @@ cenario("resposta da tela esconde a barra", () => {
   ok("barra escondida", A.stub("mb-fila-mudou").hidden);
 });
 
+cenario("a barra nao cobre o banner do alarme", () => {
+  /* o stub nao expressa layout: confere a regra de CSS (barra embaixo, banner no topo) */
+  const css = require("fs").readFileSync(require("path").join(__dirname, "..", "src", "alarme.js"), "utf8");
+  const regra = (id) => { const i = css.indexOf('"' + id + ' {",'); return i < 0 ? "" : css.slice(i, css.indexOf('"}",', i)).replace(/^\s*\/\*.*\*\/\s*$/gm, ""); };
+  ok("banner no topo", /top: 0/.test(regra("#mb-banner")));
+  ok("barra embaixo, sem top", /bottom: 20px/.test(regra("#mb-fila-mudou")) && !/top:/.test(regra("#mb-fila-mudou")));
+});
+
 /* contador 3 na tela, base conhecida, depois claim */
 function comTresNaTela() {
   const A = ligar({ intensidade: "completo", tela: telaFila(3, PAC) });
