@@ -209,5 +209,76 @@ cenario("silencioso continua mudo", () => {
   ok("nenhum som", A.sons.length === 0, String(A.sons.length));
 });
 
+/* tela da fila com [p1, p2] e depois [p2] pela consulta */
+function pacienteSaiu(telaFinal) {
+  const t0 = telaFila(2, PAC);
+  const A = ligar({ intensidade: "completo", tela: t0 });
+  A.appBuscaFila(filaReal([]));
+  A.respostasDeFetch.push({ status: 200, corpo: filaReal([{ c: "p1" }, { c: "p2" }]) });
+  A.avancar(ATE_A_PRIMEIRA);
+  A.mostrarTela(telaFinal || t0);
+  A.respostasDeFetch.push({ status: 200, corpo: filaReal([{ c: "p2" }]) });
+  A.avancar(ATE_A_PRIMEIRA);
+  return A;
+}
+
+cenario("paciente saiu, na tela da fila: barra aparece", () => {
+  const A = pacienteSaiu();
+  ok("barra visivel", !A.stub("mb-fila-mudou").hidden);
+  ok("texto", A.stub("mb-fila-mudou-texto").textContent === "A fila mudou — outro médico pode ter atendido.");
+});
+
+cenario("na agenda a barra nao aparece", () => {
+  const A = pacienteSaiu(telaSemContador());
+  ok("barra escondida", A.stub("mb-fila-mudou").hidden);
+});
+
+cenario("clicar atualiza pelo menu", () => {
+  const t = telaFila(2, PAC);
+  const A = pacienteSaiu(t);
+  A.clicar("mb-atualizar-fila");
+  ok("menu clicado", t.menu.cliques === 1, String(t.menu.cliques));
+  ok("barra escondida", A.stub("mb-fila-mudou").hidden);
+});
+
+cenario("resposta da tela esconde a barra", () => {
+  const A = pacienteSaiu();
+  A.appBuscaFila(filaReal([{ c: "p2" }]));
+  ok("barra escondida", A.stub("mb-fila-mudou").hidden);
+});
+
+/* contador 3 na tela, base conhecida, depois claim */
+function comTresNaTela() {
+  const A = ligar({ intensidade: "completo", tela: telaFila(3, PAC) });
+  A.appBuscaFila(filaReal([{ c: "a" }, { c: "b" }, { c: "c" }]));
+  return A;
+}
+
+cenario("claim 201 tira um da conta", () => {
+  const A = comTresNaTela();
+  A.claim("a", 201);
+  ok("sobraram 2", A.estado().aguardando === 2, String(A.estado().aguardando));
+});
+
+cenario("claim 409 mostra aviso de outro medico", () => {
+  const A = comTresNaTela();
+  A.claim("a", 409);
+  ok("barra visivel", !A.stub("mb-fila-mudou").hidden);
+  ok("texto", A.stub("mb-fila-mudou-texto").textContent === "Outro médico já atendeu este paciente.");
+  ok("nao descontou", A.estado().aguardando === 3, String(A.estado().aguardando));
+});
+
+cenario("clique + claim nao descontam dois", () => {
+  const A = comTresNaTela();
+  A.clicarNaPagina(A.botao("Atender"));
+  A.claim("a", 201);
+  A.claim("a", 201);
+  ok("so um desconto", A.estado().aguardando === 2, String(A.estado().aguardando));
+  const B = comTresNaTela();
+  B.claim("a", 201);
+  B.clicarNaPagina(B.botao("Atender"));
+  ok("claim e depois clique: um so", B.estado().aguardando === 2, String(B.estado().aguardando));
+});
+
 console.log(falhas ? "\n" + falhas + " FALHA(S)" : "\ntodos passaram");
 process.exit(falhas ? 1 : 0);

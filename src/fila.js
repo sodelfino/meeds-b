@@ -250,6 +250,28 @@
     return String(url || "").indexOf(CAMINHO_DA_FILA) !== -1;
   }
 
+  /* "Atender" chama POST .../api/doctor/consultations/{id}/claim. So o
+   * metodo e o caminho importam; o corpo da resposta e dado de paciente e
+   * ninguem o le. */
+  function ehChamadaDeClaim(url, metodo) {
+    if (String(metodo || "GET").toUpperCase() !== "POST") return false;
+    var caminho = String(url || "").split("?")[0];
+    return /\/api\/doctor\/consultations\/[^\/]+\/claim$/.test(caminho);
+  }
+
+  /* Leva o medico a tela da fila clicando no item de menu — o clique que
+   * ele mesmo daria. false = nao achou o item (o chamador recarrega). */
+  function clicarMenuProntoAtendimento() {
+    if (!doc) return false;
+    var itens = doc.querySelectorAll("a, button, [role=link]");
+    for (var i = 0; i < itens.length; i++) {
+      if (normalizar(itens[i].textContent) !== "pronto atendimento") continue;
+      itens[i].click();
+      return true;
+    }
+    return false;
+  }
+
   /* Colhe os ids das FOLHAS: objetos que tem "id" e que nao contem
    * nenhum outro objeto com "id" dentro. Isso importa mais do que
    * parece — o endereco se chama /queues/mine, entao o mais provavel e
@@ -365,6 +387,8 @@
     lerOrigemDoUltimoPaciente: lerOrigemDoUltimoPaciente,
     observarToast: observarToast,
     ehChamadaDaFila: ehChamadaDaFila,
+    ehChamadaDeClaim: ehChamadaDeClaim,
+    clicarMenuProntoAtendimento: clicarMenuProntoAtendimento,
     idsDeFolhas: idsDeFolhas,
     contagemDaFila: contagemDaFila,
     normalizar: normalizar,

@@ -145,6 +145,7 @@
   var shadow = null;
   var elBotao = null;
   var elBanner = null;
+  var elBarraFila = null;
   var elMoldura = null;
   var elPainel = null;
   var elCartao = null;
@@ -554,10 +555,50 @@
       var rotulo = Fila.normalizar(botao.textContent);
       if (rotulo !== Fila.ROTULO_ATENDER && rotulo.indexOf(Fila.ROTULO_ATENDER + " ") !== 0) return;
       if (Fila.lerContadorAguardando() === null) return; // nao e a tela da fila
+      if (atendimentoRecente()) return; // o claim da rede ja descontou este
+      ultimoAtendimento = { em: Date.now(), id: null, clique: true };
       aoMedicoAtender();
     } catch (e) {
       /* silencioso: este sinal e reforco, nunca pode quebrar a pagina */
     }
+  }
+
+  /* Clique e claim da rede descrevem o MESMO atendimento: o segundo, dentro
+   * de 3 s, nao desconta outro paciente. */
+  var JANELA_DO_ATENDIMENTO_MS = 3000;
+  var ultimoAtendimento = null; // { em, id (so em memoria), clique }
+  function atendimentoRecente() {
+    return !!ultimoAtendimento && Date.now() - ultimoAtendimento.em <= JANELA_DO_ATENDIMENTO_MS;
+  }
+
+  /* Resposta do claim ("Atender"): 2xx = e meu; 4xx = outro medico puxou. */
+  function aoResponderClaim(url, status) {
+    try {
+      if (status >= 200 && status < 300) {
+        var m = /\/consultations\/([^\/?]+)\/claim/.exec(String(url));
+        var id = m ? m[1] : null;
+        if (atendimentoRecente() && (ultimoAtendimento.clique || ultimoAtendimento.id === id)) {
+          ultimoAtendimento = { em: ultimoAtendimento.em, id: id, clique: false };
+          return;
+        }
+        ultimoAtendimento = { em: Date.now(), id: id, clique: false };
+        aoMedicoAtender();
+      } else if (status >= 400 && status < 500) {
+        mostrarBarraDaFila("Outro médico já atendeu este paciente.");
+      }
+    } catch (e) {
+      /* silencioso: este sinal e reforco, nunca pode quebrar a pagina */
+    }
+  }
+
+  function mostrarBarraDaFila(texto) {
+    if (!elBarraFila) return;
+    shadow.getElementById("mb-fila-mudou-texto").textContent = texto;
+    elBarraFila.hidden = false;
+  }
+
+  function esconderBarraDaFila() {
+    if (elBarraFila) elBarraFila.hidden = true;
   }
 
   function aoMedicoAtender() {
@@ -764,7 +805,16 @@
       atual[ids[i]] = true;
       if (tinhaBase && !idsVistos[ids[i]]) novos++;
     }
+    var saiuAlguem = false;
+    if (tinhaBase) for (var k in idsVistos) if (!atual[k]) saiuAlguem = true;
     idsVistos = atual;
+
+    /* A tela da fila acabou de ser atualizada; fora dela (consulta propria)
+     * o medico ve a lista velha, entao avisamos — sem clicar por ele. */
+    if (origem === "tela") esconderBarraDaFila();
+    else if (origem === "consulta" && saiuAlguem && Fila.lerContadorAguardando() !== null) {
+      mostrarBarraDaFila("A fila mudou — outro médico pode ter atendido.");
+    }
 
     /* Chegadas que o toast ou o contador JA avisaram desde a ultima
      * resposta. Sem este desconto, o clique no menu — que busca a fila e
@@ -892,6 +942,10 @@
       raiz.fetch = function (entrada, opcoes) {
         var url = typeof entrada === "string" ? entrada : (entrada && entrada.url) || "";
         var promessa = fetchOriginal.apply(this, arguments);
+        var metodoDoPedido = (opcoes && opcoes.method) || (entrada && typeof entrada !== "string" && entrada.method);
+        if (Fila.ehChamadaDeClaim(url, metodoDoPedido)) {
+          promessa.then(function (resposta) { aoResponderClaim(url, resposta.status); }).catch(function () {});
+        }
         if (Fila.ehChamadaDaFila(url)) {
           try {
             var pedido = typeof entrada !== "string" && entrada ? entrada : {};
@@ -917,6 +971,7 @@
     if (abrirOriginal) {
       raiz.XMLHttpRequest.prototype.open = function (metodo, url) {
         this.__meedsBUrl = url;
+        this.__meedsBMetodo = metodo;
         return abrirOriginal.apply(this, arguments);
       };
       var cabecalhoOriginal = raiz.XMLHttpRequest.prototype.setRequestHeader;
@@ -929,6 +984,9 @@
       var enviarOriginal = raiz.XMLHttpRequest.prototype.send;
       raiz.XMLHttpRequest.prototype.send = function () {
         var xhr = this;
+        if (Fila.ehChamadaDeClaim(xhr.__meedsBUrl, xhr.__meedsBMetodo)) {
+          xhr.addEventListener("load", function () { aoResponderClaim(xhr.__meedsBUrl, xhr.status); });
+        }
         if (Fila.ehChamadaDaFila(xhr.__meedsBUrl)) {
           try {
             anotarChamadaDaTela(xhr.__meedsBUrl, xhr.__meedsBCabecalhos || {},
@@ -983,7 +1041,16 @@
     "  background: linear-gradient(90deg,#dc2626,#f97316,#dc2626); background-size: 200% 100%;",
     "  animation: mb-desliza 1.1s linear infinite;",
     "}",
-    "#mb-banner[hidden], #mb-moldura[hidden], #mb-painel[hidden] { display: none; }",
+    "#mb-banner[hidden], #mb-moldura[hidden], #mb-painel[hidden], #mb-fila-mudou[hidden] { display: none; }",
+    "#mb-fila-mudou {",
+    "  position: fixed; top: 0; left: 0; right: 0; z-index: 2147483001;",
+    "  display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap;",
+    "  padding: 10px 18px; color: #fff; font: 600 15px system-ui, sans-serif; background: #1e40af;",
+    "}",
+    "#mb-fila-mudou button {",
+    "  background: rgba(255,255,255,.2); border: 1.5px solid rgba(255,255,255,.75); color: #fff;",
+    "  padding: 6px 14px; border-radius: 8px; font: 700 14px system-ui, sans-serif; cursor: pointer;",
+    "}",
     "@keyframes mb-desliza { from { background-position: 0 0; } to { background-position: 200% 0; } }",
     "#mb-motivo { font-weight: 500; font-size: 14px; opacity: .95; }",
     "#mb-banner button {",
@@ -1055,6 +1122,10 @@
       '  <span id="mb-motivo"></span>' +
       '  <button type="button" id="mb-silenciar">Silenciar alarme</button>' +
       "</div>" +
+      '<div id="mb-fila-mudou" hidden>' +
+      '  <span id="mb-fila-mudou-texto"></span>' +
+      '  <button type="button" id="mb-atualizar-fila">Atualizar fila</button>' +
+      "</div>" +
       '<button type="button" id="mb-botao" title="Alarme de fila"></button>' +
       /* Sino sozinho so cicla intensidade (clique) ou abre os ajustes por
        * um gesto escondido (botao direito / shift+clique) — sem um jeito
@@ -1088,6 +1159,11 @@
     elMoldura = shadow.getElementById("mb-moldura");
     elBanner = shadow.getElementById("mb-banner");
     elBotao = shadow.getElementById("mb-botao");
+    elBarraFila = shadow.getElementById("mb-fila-mudou");
+    shadow.getElementById("mb-atualizar-fila").addEventListener("click", function () {
+      esconderBarraDaFila();
+      if (!Fila.clicarMenuProntoAtendimento()) raiz.location.reload();
+    });
     elPainel = shadow.getElementById("mb-painel");
     elCartao = shadow.getElementById("mb-cartao");
     var elConfig = shadow.getElementById("mb-config");

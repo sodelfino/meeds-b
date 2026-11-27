@@ -65,7 +65,13 @@ function telaFila(aguardando, pacientes) {
       el("div", "", [p.novo === false ? el("span", "2 min") : el("span", "Novo"), el("button", "Atender")]),
     ])
   );
-  return el("div", "", [cartao].concat(linhas));
+  /* item de menu "Pronto atendimento": registra os cliques em .cliques */
+  const menu = el("a", "Pronto atendimento");
+  menu.cliques = 0;
+  menu.click = () => { menu.cliques++; };
+  const raiz = el("div", "", [menu, cartao].concat(linhas));
+  raiz.menu = menu;
+  return raiz;
 }
 
 /* Agenda e tela de consulta: o contador "Aguardando" nao existe aqui (F5). */
@@ -204,7 +210,7 @@ function criarAmbiente(opcoes) {
   NotificacaoFalsa.permission = o.permissaoDeNotificacao || "granted";
 
   function XHRFalso() { this._ouvintes = {}; this.status = 0; this.responseText = ""; this.response = null; }
-  XHRFalso.prototype.open = function (m, u) { this._url = u; };
+  XHRFalso.prototype.open = function (m, u) { this._url = u; this._metodo = m; };
   XHRFalso.prototype.setRequestHeader = function () {};
   XHRFalso.prototype.send = function () {};
   XHRFalso.prototype.addEventListener = function (ev, fn) {
@@ -312,6 +318,7 @@ function criarAmbiente(opcoes) {
     config: () => ctx.MeedsB._estado().config,
     disco: () => disco,
     ui: (id) => stubDe(id),
+    stub: (id) => stubDe(id),
     armazenado: () => JSON.stringify(armazem),
 
     mostrarTela(t) {
@@ -351,6 +358,16 @@ function criarAmbiente(opcoes) {
       x.send();
       x.status = 200;
       x.responseText = JSON.stringify(corpo);
+      (x._ouvintes.load || []).forEach((f) => f());
+    },
+
+    /* o "Atender" do app: POST .../consultations/{id}/claim e a resposta (so o status importa) */
+    claim(id, status) {
+      const x = new ctx.XMLHttpRequest();
+      x.open("POST", "https://api.calltechsaude.com.br/api/doctor/consultations/" + id + "/claim");
+      x.send();
+      x.status = status;
+      x.responseText = "";
       (x._ouvintes.load || []).forEach((f) => f());
     },
 
