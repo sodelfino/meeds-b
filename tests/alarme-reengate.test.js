@@ -146,7 +146,7 @@ function pendente(timeouts, atrasoExato) {
 }
 
 /* Leva do zero ate "silenciado, reengate agendado": dispara com fila
- * cheia, deixa a trava de espera estourar (o caminho real quando
+ * cheia, deixa a trava de 2 min da sirene estourar (o caminho real quando
  * ninguem clica em "Silenciar" a tempo). */
 function chegarNoReengateAgendado(api, timeouts) {
   api._definirContador(3); // fila cheia no momento do disparo
