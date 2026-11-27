@@ -261,7 +261,7 @@
   }
 
   /* Leva o medico a tela da fila clicando no item de menu — o clique que
-   * ele mesmo daria. false = nao achou o item (o chamador recarrega). */
+   * ele mesmo daria. false = nao achou o item (o chamador so esconde a barra). */
   function clicarMenuProntoAtendimento() {
     if (!doc) return false;
     var itens = doc.querySelectorAll("a, button, [role=link]");

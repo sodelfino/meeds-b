@@ -93,15 +93,20 @@ tela por minutos. O script cuida disso:
 
 - **Consulta de 15 s.** Só depois de a própria tela fazer a primeira chamada à
   fila, o script passa a consultar `/api/doctor/queues/mine` a cada 15 s, com a
-  mesma URL e os mesmos cabeçalhos dela. Resposta 401/403 suspende a consulta
-  até a tela chamar de novo; qualquer outro erro espera 60 s.
+  mesma URL e os mesmos cabeçalhos dela (uma chamada da tela sem `Authorization`
+  não apaga o token já guardado). Consulta sem resposta em 10 s é abortada e conta
+  como erro; qualquer erro espera 30 s. Resposta 401/403 suspende a consulta até a
+  tela chamar de novo, e o painel de ajustes avisa: "A consulta automática da fila
+  parou (sessão expirada?). Abra o Pronto atendimento para retomar."
 - **Tempo de espera do servidor.** "O mais antigo há N min" vem do `waitingSince`
   de cada item, não do momento em que o script viu o paciente — recarregar a aba
   não zera a contagem.
 - **Barra "A fila mudou".** Quando a consulta mostra que a fila mudou (outro
   médico atendeu, alguém saiu), uma barra no canto inferior esquerdo avisa e
   oferece **Atualizar fila**, que clica no menu "Pronto atendimento" do próprio
-  app. Fica embaixo para não cobrir o banner do alarme.
+  app — se não achar o menu, a barra só some; a página nunca é recarregada. A
+  barra some sozinha quando o contador sai da tela (o médico entrou numa consulta)
+  e quando o "Atender" dá certo. Fica embaixo para não cobrir o banner do alarme.
 - **Quem puxou primeiro.** O script escuta a resposta do "Atender" (`claim`): 2xx
   tira o paciente da conta; erro 4xx mostra "Outro médico já atendeu este
   paciente."
@@ -151,9 +156,15 @@ desenhado em volta disso:
   leitura fresca fora do Pronto Atendimento).
   Por isso o reengate de 1 min, o repique de 1 min do Discreto e o lembrete de
   quem já esperava **só soam se o contador foi lido há no máximo 40 s**. Sem
-  leitura fresca eles reagendam em silêncio, no mesmo ritmo — **não desistem** —
-  e decidem quando o médico volta à tela da fila. A corrente só morre com prova
-  fresca de fila vazia.
+  leitura fresca, o lembrete pede a consulta na hora e decide pela resposta; se não
+  dá para consultar (consulta ainda não capturada, ou suspensa por 401/403) ou ela
+  falha, ele reagenda em silêncio, no mesmo ritmo — **não desiste**. Toda leitura
+  com gente esperando garante que há um lembrete agendado. A corrente só morre com
+  prova fresca de fila vazia.
+- **Contador parado não é chegada.** A tela não se atualiza sozinha: um número
+  "Aguardando" que não mudou desde a leitura anterior não vale como evidência
+  quando a rede já leu depois dele. Depois de a consulta dizer "fila vazia", só uma
+  *mudança* do contador (ou o aviso do próprio app) conta como chegada nova.
 - **"Atender" clicado na fila** encerra o aviso desse paciente antes de a tela
   mudar. Só vale com o cartão na tela: na Agenda o mesmo botão atende uma consulta
   *marcada*, e contar esse clique tiraria da memória um paciente que ainda espera.

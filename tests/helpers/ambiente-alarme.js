@@ -245,11 +245,17 @@ function criarAmbiente(opcoes) {
       catch(r) { return this.then(null, r); },
     };
   }
-  const pendurado = { then() { return pendurado; }, catch() { return pendurado; } };
+  /* pendurado: nunca responde — so rejeita se o chamador abortar (AbortController) */
+  function pendurado(sinal) {
+    const aoRejeitar = [];
+    const p = { then(f, r) { if (r) aoRejeitar.push(r); return p; }, catch(r) { aoRejeitar.push(r); return p; } };
+    if (sinal) sinal.addEventListener("abort", () => aoRejeitar.forEach((r) => r(new Error("AbortError"))));
+    return p;
+  }
   function fetchFalso(url, opcoes) {
     chamadasDeFetch.push({ url, opcoes });
     const r = respostasDeFetch.shift();
-    if (!r || r === "pendurar") return pendurado;
+    if (!r || r === "pendurar") return pendurado(opcoes && opcoes.signal);
     const resposta = {
       status: r.status, ok: r.status >= 200 && r.status < 300,
       json() { return resolvido(r.corpo); },
@@ -261,6 +267,7 @@ function criarAmbiente(opcoes) {
   class DataFalsa extends Date { static now() { return agora; } }
 
   const janelas = [];
+  let recargas = 0;
   let janelaBloqueada = !!o.janelaBloqueada;
   armazem["meeds-b:config"] = JSON.stringify({ intensidade: o.intensidade || "completo", janela: !!o.janela });
   /* `guardado`: preferencia ja gravada, lida pelo GM_getValue (como no
@@ -290,7 +297,9 @@ function criarAmbiente(opcoes) {
     XMLHttpRequest: XHRFalso,
     fetch: fetchFalso,
     URL,
-    location: { origin: "https://doctor.calltechsaude.com.br", href: "https://doctor.calltechsaude.com.br/fila" },
+    location: { origin: "https://doctor.calltechsaude.com.br", href: "https://doctor.calltechsaude.com.br/fila",
+                reload() { recargas++; } },
+    AbortController,
     MutationObserver: function (cb) { aoMutar = cb; this.observe = () => {}; this.disconnect = () => {}; },
     focus() {},
     screen: { width: 1920 },
@@ -326,6 +335,7 @@ function criarAmbiente(opcoes) {
     agora: () => agora,
     ordem,
     passoDoConvite: () => ctx.MeedsB._passoDoConvite(),
+    recargas: () => recargas,
     bloquearJanela(v) { janelaBloqueada = !!v; },
     notificacoes, sons, logs, janelas, respostasDeFetch, chamadasDeFetch,
     titulo: () => documento.title,

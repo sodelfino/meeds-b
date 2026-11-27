@@ -77,15 +77,15 @@ cenario("401 suspende e a tela retoma", () => {
   ok("a tela buscou de novo: a consulta volta", A.chamadasDeFetch.length === 2, String(A.chamadasDeFetch.length));
 });
 
-cenario("erro 500 espera 60 s", () => {
+cenario("erro 500 espera 30 s", () => {
   const A = ligar({ intensidade: "completo" });
   A.appBuscaFila(filaReal([]));
   A.respostasDeFetch.push({ status: 500 });
   A.avancar(ATE_A_PRIMEIRA);
-  A.avancar(59 * SEG);
-  ok("nenhuma chamada nova em 59 s", A.chamadasDeFetch.length === 1, String(A.chamadasDeFetch.length));
+  A.avancar(29 * SEG);
+  ok("nenhuma chamada nova em 29 s", A.chamadasDeFetch.length === 1, String(A.chamadasDeFetch.length));
   A.avancar(1 * SEG);
-  ok("uma aos 60 s", A.chamadasDeFetch.length === 2, String(A.chamadasDeFetch.length));
+  ok("uma aos 30 s", A.chamadasDeFetch.length === 2, String(A.chamadasDeFetch.length));
 });
 
 cenario("sem sobreposicao", () => {
@@ -93,8 +93,42 @@ cenario("sem sobreposicao", () => {
   A.appBuscaFila(filaReal([]));
   A.respostasDeFetch.push("pendurar");
   A.avancar(ATE_A_PRIMEIRA);
-  A.avancar(60 * SEG);
+  A.avancar(9 * SEG);
   ok("so 1 chamada enquanto a primeira nao responde", A.chamadasDeFetch.length === 1, String(A.chamadasDeFetch.length));
+});
+
+/* I1: rede presa (Wi-Fi trocando, notebook acordando) nao pode matar a consulta pelo resto do plantao */
+cenario("consulta pendurada e abortada aos 10 s e volta depois do recuo", () => {
+  const A = ligar({ intensidade: "completo" });
+  A.appBuscaFila(filaReal([]));
+  A.respostasDeFetch.push("pendurar");
+  A.avancar(ATE_A_PRIMEIRA);
+  const c = A.chamadasDeFetch[0] || { opcoes: {} };
+  ok("a consulta leva um sinal de abortar", !!c.opcoes.signal);
+  A.avancar(10 * SEG);
+  ok("abortada aos 10 s", !!(c.opcoes.signal && c.opcoes.signal.aborted));
+  A.respostasDeFetch.push({ status: 200, corpo: filaReal([]) });
+  A.avancar(30 * SEG);
+  ok("tenta de novo 30 s depois do aborto", A.chamadasDeFetch.length === 2, String(A.chamadasDeFetch.length));
+  A.avancar(4 * 60 * 60 * SEG);
+  ok("continua consultando horas depois", A.chamadasDeFetch.length > 100, String(A.chamadasDeFetch.length));
+});
+
+/* I2: uma chamada da fila sem cabecalho nao apaga o token capturado */
+cenario("chamada do app sem Authorization nao apaga o token", () => {
+  const A = ligar({ intensidade: "completo" });
+  A.appBuscaFila(filaReal([]), { headers: { Authorization: "Bearer T" } });
+  A.appBuscaFila(filaReal([]));
+  A.appBuscaFila(filaReal([]), { headers: { "X-Outro": "1" } });
+  A.respostasDeFetch.push({ status: 200, corpo: filaReal([]) });
+  A.avancar(ATE_A_PRIMEIRA);
+  const h = (A.chamadasDeFetch[0] || { opcoes: {} }).opcoes.headers || {};
+  ok("mantem o Authorization", h.Authorization === "Bearer T", JSON.stringify(h));
+  A.appBuscaFila(filaReal([]), { headers: { authorization: "Bearer novo" } });
+  A.respostasDeFetch.push({ status: 200, corpo: filaReal([]) });
+  A.avancar(15 * SEG);
+  const h2 = (A.chamadasDeFetch[1] || { opcoes: {} }).opcoes.headers || {};
+  ok("troca quando vem um token novo (nome em minusculas)", h2.authorization === "Bearer novo", JSON.stringify(h2));
 });
 
 cenario("fila vazia pela consulta cala o alarme", () => {
@@ -295,6 +329,159 @@ cenario("clique + claim nao descontam dois", () => {
   B.claim("a", 201);
   B.clicarNaPagina(B.botao("Atender"));
   ok("claim e depois clique: um so", B.estado().aguardando === 2, String(B.estado().aguardando));
+});
+
+/* ---------- revisao final: C1, C2, I3, I4 ---------- */
+
+/* C1: contador da tela parado em 1, consulta dizendo fila vazia */
+function contadorParadoComFilaVazia() {
+  const A = ligar({ intensidade: "completo", tela: telaFila(0, []) });
+  A.appBuscaFila(filaReal([]));
+  A.mostrarTela(telaFila(1, PAC));
+  A.toast();
+  A.avancar(4 * SEG);
+  A.respostasDeFetch.push({ status: 200, corpo: filaReal([]) });
+  A.avancar(ATE_A_PRIMEIRA);
+  return A;
+}
+
+cenario("contador parado nao faz a sirene voltar com a fila vazia (C1)", () => {
+  const A = contadorParadoComFilaVazia();
+  ok("a consulta calou", !A.estado().tocando);
+  const antes = A.sons.length;
+  avancarConsultando(A, 180 * SEG, () => filaReal([]));
+  ok("nenhum toque em 3 min", A.sons.length === antes, A.sons.length - antes + " toques");
+  ok("nao esta tocando", !A.estado().tocando);
+});
+
+cenario("depois do 0 da rede, o contador MUDANDO ainda e chegada (C1)", () => {
+  const A = contadorParadoComFilaVazia();
+  A.mostrarTela(telaFila(2, PAC));
+  A.avancar(4 * SEG);
+  ok("tocou", A.estado().tocando === true);
+});
+
+cenario("depois do 0 da rede, o toast ainda e chegada (C1)", () => {
+  const A = contadorParadoComFilaVazia();
+  A.toast();
+  ok("tocou", A.estado().tocando === true);
+});
+
+/* C2: o lembrete volta a ser armado quando a contagem sobe sem id novo */
+cenario("abertura com esqueleto 0 e paciente pela rede: lembrete soa (C2)", () => {
+  const A = ligar({ intensidade: "completo", tela: telaFila(0, []) });
+  A.appBuscaFila(filaReal([{ c: "c1" }]));
+  A.mostrarTela(telaFila(1, PAC));
+  avancarConsultando(A, 3 * 60 * SEG, UM);
+  ok("tocou em 3 min", A.sons.length > 0, A.sons.length + " toques");
+});
+
+cenario("abertura com esqueleto 0, discreto: lembrete soa (C2)", () => {
+  const A = ligar({ intensidade: "discreto", tela: telaFila(0, []) });
+  A.appBuscaFila(filaReal([{ c: "c1" }]));
+  A.mostrarTela(telaFila(1, PAC));
+  avancarConsultando(A, 3 * 60 * SEG, UM);
+  ok("tocou em 3 min", A.sons.length > 0, A.sons.length + " toques");
+});
+
+cenario("claim 2xx de quem nao esta na fila nao desconta (C2)", () => {
+  const A = ligar({ intensidade: "completo", tela: telaFila(1, PAC) });
+  A.appBuscaFila(UM());
+  A.claim("outra-consulta", 201);
+  ok("continua 1 aguardando", A.estado().aguardando === 1, String(A.estado().aguardando));
+  A.mostrarTela(telaSemContador()); // so a consulta fala: nada de contador parado ajudando
+  avancarConsultando(A, 3 * 60 * SEG, UM);
+  ok("o lembrete tocou", A.sons.length > 0, A.sons.length + " toques");
+});
+
+cenario("claim 2xx fora da tela da fila nao desconta (C2)", () => {
+  const A = ligar({ intensidade: "completo", tela: telaFila(1, PAC) });
+  A.appBuscaFila(UM());
+  A.mostrarTela(telaSemContador("Consulta"));
+  A.claim("c1", 201);
+  ok("continua 1 aguardando", A.estado().aguardando === 1, String(A.estado().aguardando));
+});
+
+cenario("clique em Atender e claim que falha: o lembrete volta (C2)", () => {
+  const A = ligar({ intensidade: "completo", tela: telaFila(1, PAC) });
+  A.appBuscaFila(UM());
+  A.clicarNaPagina(A.botao("Atender"));
+  A.mostrarTela(telaSemContador("Consulta"));
+  A.claim("c1", 500);
+  ok("o clique descontou", A.estado().aguardando === 0, String(A.estado().aguardando));
+  avancarConsultando(A, 3 * 60 * SEG, UM);
+  ok("a consulta trouxe o paciente de volta e o lembrete tocou", A.sons.length > 0, A.sons.length + " toques");
+});
+
+/* I3: a barra "A fila mudou" nao fica na consulta e nunca recarrega a pagina */
+cenario("barra some quando o contador sai da tela (I3)", () => {
+  const A = pacienteSaiu();
+  ok("barra visivel no PA", !A.stub("mb-fila-mudou").hidden);
+  A.mostrarTela(telaSemContador("Consulta"));
+  A.avancar(4 * SEG);
+  ok("barra escondida na consulta", A.stub("mb-fila-mudou").hidden);
+});
+
+cenario("barra some no claim 2xx (I3)", () => {
+  const A = pacienteSaiu();
+  A.claim("p2", 201);
+  ok("barra escondida", A.stub("mb-fila-mudou").hidden);
+});
+
+cenario("sem o menu, o botao so esconde a barra — nunca recarrega (I3)", () => {
+  const A = pacienteSaiu();
+  const { el } = require("./helpers/ambiente-alarme");
+  A.mostrarTela(el("div", "", [el("div", "", [el("span", "Aguardando"), el("div", "1"), el("span", "na fila agora")])]));
+  let erro = null;
+  try { A.clicar("mb-atualizar-fila"); } catch (e) { erro = e; }
+  ok("sem excecao", erro === null, erro && erro.message);
+  ok("nao recarregou", A.recargas() === 0, String(A.recargas()));
+  ok("barra escondida", A.stub("mb-fila-mudou").hidden);
+});
+
+/* I4: lembrete na hora, com leitura velha, pede a consulta e decide na resposta */
+function lembreteComLeituraVelha(intensidade) {
+  const A = ligar({ intensidade, tela: telaSemContador() });
+  A.appBuscaFila(UM());                         // t=0: base 1, lembrete para t=60
+  A.respostasDeFetch.push({ status: 500 });     // t=15
+  A.respostasDeFetch.push({ status: 500 });     // t=45 (recuo de 30 s)
+  A.respostasDeFetch.push({ status: 200, corpo: UM() }); // a consulta pedida pelo lembrete
+  A.avancar(59 * SEG);
+  return A;
+}
+
+cenario("reengate com leitura velha consulta na hora e toca (I4)", () => {
+  const A = lembreteComLeituraVelha("completo");
+  ok("nada antes do minuto", A.sons.length === 0, String(A.sons.length));
+  A.avancar(2 * SEG);
+  ok("tocou no minuto", A.sons.length > 0, A.sons.length + " toques");
+  ok("3 consultas (a ultima pedida pelo lembrete)", A.chamadasDeFetch.length === 3, String(A.chamadasDeFetch.length));
+});
+
+cenario("repique do discreto com leitura velha consulta na hora e toca (I4)", () => {
+  const A = lembreteComLeituraVelha("discreto");
+  A.avancar(2 * SEG);
+  ok("tocou no minuto", A.sons.length > 0, A.sons.length + " toques");
+});
+
+cenario("consulta pedida pelo lembrete com fila vazia nao toca (I4)", () => {
+  const A = ligar({ intensidade: "completo", tela: telaSemContador() });
+  A.appBuscaFila(UM());
+  A.respostasDeFetch.push({ status: 500 }, { status: 500 }, { status: 200, corpo: filaReal([]) });
+  A.avancar(61 * SEG);
+  ok("nenhum toque", A.sons.length === 0, A.sons.length + " toques");
+  ok("fila zerada", A.estado().aguardando === 0, String(A.estado().aguardando));
+});
+
+cenario("consulta suspensa aparece no painel e some ao retomar (I4)", () => {
+  const A = ligar({ intensidade: "completo" });
+  A.appBuscaFila(filaReal([]));
+  A.respostasDeFetch.push({ status: 401 });
+  A.avancar(ATE_A_PRIMEIRA);
+  const aviso = "A consulta automática da fila parou (sessão expirada?). Abra o Pronto atendimento para retomar.";
+  ok("o painel avisa", A.stub("mb-estado").textContent.indexOf(aviso) >= 0, A.stub("mb-estado").textContent);
+  A.appBuscaFila(filaReal([]), { headers: { Authorization: "Bearer novo" } });
+  ok("retomada: o aviso some", A.stub("mb-estado").textContent.indexOf(aviso) < 0, A.stub("mb-estado").textContent);
 });
 
 console.log(falhas ? "\n" + falhas + " FALHA(S)" : "\ntodos passaram");

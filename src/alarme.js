@@ -168,6 +168,9 @@
   var idsVistos = null;           // null = ainda nao ha base
   var ultimoContador = null;
   var ultimoContadorEm = 0;       // quando ultimoContador foi lido pela ULTIMA vez
+  var ultimoLidoDom = null;       // o ultimo numero lido do cartao "Aguardando"
+  var ultimaMudancaDomEm = 0;     // quando esse numero mudou pela ultima vez
+  var ultimaLeituraRedeEm = 0;    // quando a rede (tela ou consulta) trouxe uma contagem
   var ultimoDisparo = 0;
   var chegadaEm = null;           // quando o alarme comecou a tocar
   var ultimaOrigem = null;        // cidade do ultimo paciente, so para o cartao Discreto
@@ -456,25 +459,28 @@
    * ------------------------------------------------------------------ */
   function agendarRepiqueDeEsperaDiscreto() {
     if (timeoutRepiqueDiscreto) return; // ja ha um repique agendado
-    timeoutRepiqueDiscreto = setTimeout(function () {
-      timeoutRepiqueDiscreto = null;
-      if (quantosAguardando() <= 0) return;           // paciente ja saiu da fila
-      if (config.intensidade !== "discreto") {        // medico trocou de modo:
-        armarLembreteDeEspera();                      // o lembrete passa ao ritmo do novo modo
-        return;
-      }
-      /* Mesma regra do reengate (D64): sem leitura FRESCA do contador, nao
-       * toca as cegas — reagenda em silencio, no mesmo ritmo, e decide
-       * quando o medico voltar a tela da fila. */
-      if (!evidenciaFrescaDoContador()) {
-        console.debug("[Meeds B] sem leitura fresca da fila — repique reagendado em silencio");
-        timeoutRepiqueDiscreto = null;
-        agendarRepiqueDeEsperaDiscreto();
-        return;
-      }
-      console.debug("[Meeds B] paciente ainda esperando, repique do modo discreto");
-      dispararAlarme("ainda-aguardando");
-    }, INTERVALO_REPIQUE_DISCRETO_MS);
+    timeoutRepiqueDiscreto = setTimeout(repicarEsperaDiscreto, INTERVALO_REPIQUE_DISCRETO_MS);
+  }
+
+  /* jaConsultou: chamado de volta pela consulta que este repique pediu */
+  function repicarEsperaDiscreto(jaConsultou) {
+    cancelarRepique(); // chamado de volta pela consulta, pode haver outro agendado no meio
+    if (quantosAguardando() <= 0) return;           // paciente ja saiu da fila
+    if (config.intensidade !== "discreto") {        // medico trocou de modo:
+      armarLembreteDeEspera();                      // o lembrete passa ao ritmo do novo modo
+      return;
+    }
+    /* Mesma regra do reengate (D64): sem leitura FRESCA do contador, nao
+     * toca as cegas — pede a consulta na hora e decide na resposta; se nao
+     * der para consultar (ou ela falhar), reagenda em silencio, no mesmo ritmo. */
+    if (!evidenciaFrescaDoContador()) {
+      if (jaConsultou !== true && consultarParaDecidir(function () { repicarEsperaDiscreto(true); })) return;
+      console.debug("[Meeds B] sem leitura fresca da fila — repique reagendado em silencio");
+      agendarRepiqueDeEsperaDiscreto();
+      return;
+    }
+    console.debug("[Meeds B] paciente ainda esperando, repique do modo discreto");
+    dispararAlarme("ainda-aguardando");
   }
 
   function pararSom() {
@@ -537,10 +543,12 @@
     if (!baseAssentada) {
       baseAssentada = true;
       alertados = n;                       // quem ja estava la nao e "chegada"
-      if (n > 0) armarLembreteDeEspera();
     } else if (n < alertados) {
       alertados = n;                       // alguem saiu: o proximo a chegar conta
     }
+    /* Toda leitura com gente esperando garante a corrente de lembretes (idempotente):
+     * so na base, um esqueleto "0" ou um desconto errado a matavam para sempre. */
+    if (n > 0) armarLembreteDeEspera();
     if (n === 0) aoFilaVazia();
   }
 
@@ -579,12 +587,16 @@
   function aoResponderClaim(url, status) {
     try {
       if (status >= 200 && status < 300) {
+        esconderBarraDaFila(); // o medico vai entrar na consulta: a barra nao pode ficar la
         var m = /\/consultations\/([^\/?]+)\/claim/.exec(String(url));
         var id = m ? m[1] : null;
         if (atendimentoRecente() && (ultimoAtendimento.clique || ultimoAtendimento.id === id)) {
           ultimoAtendimento = { em: ultimoAtendimento.em, id: id, clique: false };
           return;
         }
+        /* as mesmas guardas do clique: so desconta quem esta na fila, na tela da fila */
+        if (!idsVistos || !idsVistos[id]) return;
+        if (Fila.lerContadorAguardando() === null) return;
         ultimoAtendimento = { em: Date.now(), id: id, clique: false };
         aoMedicoAtender();
       } else if (status >= 400 && status < 500) {
@@ -652,7 +664,9 @@
 
   /* Sem leitura fresca do contador (medico fora da tela da fila havera
    * mais de LIMITE_FRESCOR_CONTADOR_MS): nao toca as cegas em cima de um
-   * numero que pode ter ficado parado ha minutos. Tambem nao desiste —
+   * numero que pode ter ficado parado ha minutos. Primeiro pede a consulta
+   * na hora (consultarParaDecidir) e decide na resposta. Sem consulta
+   * possivel, ou se ela falhar, nao desiste —
    * tenta de novo mais tarde, na MESMA cadencia, ate uma leitura fresca
    * aparecer (o medico volta a tela, ou so o proximo poll de 4s pega o
    * contador visivel de novo). A corrente so morre quando ha PROVA fresca
@@ -661,9 +675,12 @@
    * Vale para TODO lembrete que soa sozinho: o reengate de 1 min, o lembrete
    * de quem ja esperava quando o alarme ligou, e (via
    * repiqueDeEsperaDiscreto) o repique de 1 min do Discreto. */
-  function tentarReengatarAlarme() {
+  function tentarReengatarAlarme(jaConsultou) {
+    if (timeoutReengate) clearTimeout(timeoutReengate); // chamado de volta pela consulta, pode haver outro agendado no meio
     timeoutReengate = null;
     if (!evidenciaFrescaDoContador()) {
+      /* antes de reagendar: a consulta na hora resolve a duvida (I4) */
+      if (jaConsultou !== true && consultarParaDecidir(function () { tentarReengatarAlarme(true); })) return;
       console.debug("[Meeds B] sem leitura fresca da fila apos silenciar — reagendando em silencio, sem tocar");
       timeoutReengate = setTimeout(tentarReengatarAlarme, REENGATE_MS);
       return;
@@ -753,7 +770,21 @@
      * e tambem nada a DESdizer. O ultimo numero fica, e a IDADE dele
      * (ultimoContadorEm) e o que qualquer lembrete consulta antes de soar
      * (evidenciaFrescaDoContador). */
-    if (n === null) return;
+    if (n === null) {
+      esconderBarraDaFila(); // saiu do PA (ex.: entrou na consulta): a barra nao serve la
+      return;
+    }
+
+    /* A tela NAO se atualiza sozinha: um numero que nao mudou desde a
+     * leitura anterior do DOM nao e evidencia nova. Se a rede leu depois da
+     * ultima mudanca do DOM, a rede vale e o numero parado e ignorado —
+     * senao a consulta dizia 0 e o contador parado em 1 virava "chegada"
+     * a cada 15 s, para sempre (C1). Uma chegada nova aparece como MUDANCA
+     * do contador, ou pelo toast. */
+    var mudou = n !== ultimoLidoDom;
+    ultimoLidoDom = n;
+    if (mudou) ultimaMudancaDomEm = Date.now();
+    else if (ultimaLeituraRedeEm > ultimaMudancaDomEm) return;
 
     /* Um "0" logo depois de uma chegada que o contador AINDA NAO mostrava
      * (o toast ou a rede chegaram antes de a tela renderizar) e atraso de
@@ -831,6 +862,7 @@
     /* A rede sabe QUANTOS, em qualquer tela. E a unica fonte que ve a fila
      * vazia quando o contador nao esta na tela (C1). */
     if (total !== null) {
+      ultimaLeituraRedeEm = Date.now();
       registrarLeitura(total);
       /* A primeira resposta tambem so assenta a base: se o DOM leu "0" de
        * um esqueleto antes de os dados chegarem, quem ja esperava nao pode
@@ -853,7 +885,10 @@
    * e por definicao a fila do medico logado. Nenhum outro dado e pedido.
    * ------------------------------------------------------------------ */
   var INTERVALO_CONSULTA_MS = 15000;
-  var ESPERA_APOS_ERRO_MS = 60000;
+  /* menor que o frescor (40 s): um erro so nao pode calar o lembrete seguinte */
+  var ESPERA_APOS_ERRO_MS = 30000;
+  /* rede presa (Wi-Fi trocando, notebook acordando) nunca termina sozinha */
+  var PRAZO_DA_CONSULTA_MS = 10000;
   var fetchOriginal = null;
   var urlDaFila = null;           // absoluta, da ultima chamada da tela
   var cabecalhosDaFila = null;    // nome -> valor, da ultima chamada da tela; nunca vai a disco
@@ -863,6 +898,7 @@
   var consultaEmAndamento = false;
   var timerConsulta = null;
   var respostasDaTela = 0;        // so para teste: quantas respostas vieram pelo gancho
+  var aoTerminarConsulta = null;  // um lembrete esperando a consulta que ele pediu
 
   /* Headers, array de pares ou objeto simples -> objeto simples */
   function copiarCabecalhos(h) {
@@ -888,12 +924,29 @@
     } catch (e) {
       return; // sem endereco confiavel, nao ha o que consultar
     }
-    cabecalhosDaFila = cabecalhos;
+    /* Uma chamada sem token (ou um XHR que o app abra sem cabecalho) nao
+     * pode apagar o token que ja temos: a consulta seguinte levaria 401. */
+    if (cabecalhosDaFila === null || temAutorizacao(cabecalhos)) cabecalhosDaFila = cabecalhos;
     credenciaisDaFila = credenciais || "same-origin";
     if (primeira || consultaSuspensa) {
       consultaSuspensa = false;
+      refletirEstado();
       agendarConsulta(INTERVALO_CONSULTA_MS);
     }
+  }
+
+  function temAutorizacao(cabecalhos) {
+    return Object.keys(cabecalhos || {}).some(function (nome) { return nome.toLowerCase() === "authorization"; });
+  }
+
+  /* Um lembrete na hora, com a leitura velha: consulta AGORA e decide na
+   * resposta (I4). false = nao da para consultar (sem endereco/token
+   * capturado, ou suspensa por 401/403) — o lembrete reagenda em silencio. */
+  function consultarParaDecidir(decidir) {
+    if (!urlDaFila || consultaSuspensa || typeof fetchOriginal !== "function") return false;
+    aoTerminarConsulta = decidir;
+    if (!consultaEmAndamento) consultarFilaAgora(); // em andamento: o fim dela chama decidir
+    return true;
   }
 
   /* Um timer so: reagendar substitui o anterior, nunca empilha. */
@@ -904,14 +957,24 @@
   }
 
   function consultarFilaAgora() {
+    if (timerConsulta) clearTimeout(timerConsulta); // pedida por um lembrete, fora do ritmo
     timerConsulta = null;
     if (!urlDaFila) return;
     if (consultaEmAndamento || consultaSuspensa) return agendarConsulta(INTERVALO_CONSULTA_MS);
     consultaEmAndamento = true;
-    function falhou() {
+    var controle = typeof raiz.AbortController === "function" ? new raiz.AbortController() : null;
+    var prazo = controle ? setTimeout(function () { controle.abort(); }, PRAZO_DA_CONSULTA_MS) : null;
+    /* o fim de toda consulta, com ou sem sucesso: libera a proxima e chama o lembrete que esperava */
+    function terminar(proxima) {
+      if (!consultaEmAndamento) return; // abort tardio depois do fim: ja terminou
       consultaEmAndamento = false;
-      agendarConsulta(ESPERA_APOS_ERRO_MS);
+      if (prazo) clearTimeout(prazo);
+      if (proxima) agendarConsulta(proxima);
+      var decidir = aoTerminarConsulta;
+      aoTerminarConsulta = null;
+      if (decidir) decidir();
     }
+    function falhou() { terminar(ESPERA_APOS_ERRO_MS); }
     try {
       /* fetchOriginal, nunca raiz.fetch: a nossa consulta nao passa pelo gancho */
       fetchOriginal
@@ -920,18 +983,18 @@
           credentials: credenciaisDaFila,
           cache: "no-store",
           headers: cabecalhosDaFila || {},
+          signal: controle ? controle.signal : undefined,
         })
         .then(function (resposta) {
           if (resposta.status === 401 || resposta.status === 403) {
-            consultaEmAndamento = false;
             consultaSuspensa = true; // sem reagendar: a proxima busca da tela retoma
-            return;
+            refletirEstado();
+            return terminar(null);
           }
           if (!resposta.ok) return falhou();
           return resposta.json().then(function (json) {
-            consultaEmAndamento = false;
             aoResponderFila(json, "consulta");
-            agendarConsulta(INTERVALO_CONSULTA_MS);
+            terminar(INTERVALO_CONSULTA_MS);
           });
         })
         .catch(falhou);
@@ -1171,8 +1234,10 @@
     elBotao = shadow.getElementById("mb-botao");
     elBarraFila = shadow.getElementById("mb-fila-mudou");
     shadow.getElementById("mb-atualizar-fila").addEventListener("click", function () {
+      /* Nunca recarrega a pagina: no meio de um atendimento isso perderia o
+       * que o medico digitou. Sem o menu, a barra so some. */
       esconderBarraDaFila();
-      if (!Fila.clicarMenuProntoAtendimento()) raiz.location.reload();
+      Fila.clicarMenuProntoAtendimento();
     });
     elPainel = shadow.getElementById("mb-painel");
     desenharCabecalho();
@@ -1434,6 +1499,10 @@
     }
     if (Atencao && Atencao.suportaTelaAcesa()) {
       estado.textContent += " A tela não apaga enquanto esta aba estiver aberta.";
+    }
+    if (consultaSuspensa) {
+      estado.textContent = "A consulta automática da fila parou (sessão expirada?). " +
+        "Abra o Pronto atendimento para retomar. " + estado.textContent;
     }
   }
 
