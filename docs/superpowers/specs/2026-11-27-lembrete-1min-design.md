@@ -70,3 +70,18 @@ Escopo: **só o alarme**. Os outros módulos do Assistente Meeds (A) não entram
   `toque-duplo`) passa para os novos uma vez; quem escolheu outro som mantém.
 - Tempo de espera contado a partir da primeira vez que o script viu o
   `consultationId` (como no A); a aba recarregada recomeça a contagem.
+
+## O que a gravação Jam de 17/09 acrescentou (adendo de 27/11)
+
+- A fila é buscada por **XHR** em `https://api.calltechsaude.com.br/api/doctor/queues/mine`
+  (outro domínio, com preflight `OPTIONS` — sinal de cabeçalho de acesso próprio, não
+  só cookie). A consulta própria só começa **depois** de ver a primeira chamada do app,
+  reusando a URL e os cabeçalhos dela; sem isso não há para onde nem como consultar.
+- "Atender" chama `POST /api/doctor/consultations/{id}/claim` (201 quando dá certo) e
+  depois `PATCH …/start`. É aí que nasce o erro "outro médico já puxou": o `claim`
+  responde com erro. O alarme passa a ouvir essa resposta: **201** = paciente saiu da
+  fila (sinal mais forte que o texto do botão); **4xx** = mostra "Outro médico já
+  atendeu este paciente" e atualiza a fila pelo menu do app.
+- Cada consulta traz `checkedInAt` (hora da chegada no servidor). Quando o item da fila
+  trouxer esse campo, o tempo de espera usa ele; "primeira vez visto" fica de reserva.
+- Depois de "Finalizar atendimento" o próprio app busca a fila de novo.
