@@ -5,9 +5,26 @@ Avisa o médico quando entra paciente no Pronto Atendimento do **Meeds Doctor**
 minimizado, que é justamente quando o aviso da própria tela não é visto por
 ninguém.
 
-Instalação em [docs/INSTALACAO.md](docs/INSTALACAO.md) — computador/Android
-com Tampermonkey, ou iPad/iPhone/Mac com Safari (app Userscripts). As duas
-versões têm o mesmo código, byte a byte; só o cabeçalho muda.
+## ⚡ Instalar agora
+
+| Onde você atende | Clique para instalar |
+|---|---|
+| 💻 **Computador ou Android** — Chrome, Edge ou Firefox, com a extensão [Tampermonkey](https://www.tampermonkey.net/) | **[➜ Instalar o Meeds B](https://raw.githubusercontent.com/sodelfino/meeds-b/main/dist/meeds-b.user.js)** |
+| 📱 **iPad, iPhone ou Mac** — Safari, com o app gratuito [Userscripts](https://apps.apple.com/app/userscripts/id1463298887) | **[➜ Instalar a versão Safari](https://raw.githubusercontent.com/sodelfino/meeds-b/main/dist/meeds-b.safari.user.js)** |
+
+**No computador, em três passos:**
+
+1. Instale o **Tampermonkey** pela loja do seu navegador (uma vez só).
+2. Clique em **➜ Instalar o Meeds B**, acima, e depois em **Instalar** na tela do Tampermonkey.
+3. Abra o Meeds Doctor (`doctor.calltechsaude.com.br`). O sino 🔔 aparece no canto inferior direito, e um cartão pergunta se você quer ser avisado também quando estiver em outro programa — diga **Sim, ativar**.
+
+Depois disso ele **se atualiza sozinho**, e ao clicar no sino ele também confere se há versão nova.
+
+> **Usa Edge?** Em **Configurações › Sistema e desempenho**, acrescente `doctor.calltechsaude.com.br` em *"Nunca colocar estes sites em suspensão"*. Aba dormindo não consulta a fila, e o alarme fica mudo.
+
+📖 **Passo a passo completo** (Safari no iPad, ajuste do Edge, avisos do sistema, perguntas frequentes): [docs/INSTALACAO.md](docs/INSTALACAO.md)
+
+As duas versões têm o mesmo código, byte a byte; só o cabeçalho muda.
 
 ---
 
@@ -29,6 +46,12 @@ escada em que cada degrau muda de canal — não de volume:
 | onde o médico está | como ele é avisado |
 |---|---|
 | na aba, olhando | som + faixa vermelha no topo + moldura na borda da tela |
+| na aba, mas de fundo | contador no título e no ícone da aba: `(3) Meeds Doctor` |
+| fora do navegador | **notificação do sistema, clicável** — traz a aba para frente |
+| ninguém reagiu | volta em 1 minuto, e notifica de novo |
+
+Clicar na notificação é "estou indo": traz a aba e silencia. Se o médico não
+atender de fato, o alarme volta. É *acknowledge*, não *dismiss*.
 
 ### As três intensidades
 
@@ -55,12 +78,6 @@ A lista de sons muda junto com a intensidade. As sirenes foram feitas para
 repetir e soam truncadas se tocadas uma vez só, então o modo discreto só oferece
 os sons curtos — os que têm começo, meio e fim em menos de um segundo.
 
-| na aba, mas de fundo | contador no título e no ícone da aba: `(3) Meeds Doctor` |
-| fora do navegador | **notificação do sistema, clicável** — traz a aba para frente |
-| ninguém reagiu | volta em 1 minuto, e notifica de novo |
-
-Clicar na notificação é "estou indo": traz a aba e silencia. Se o médico não
-atender de fato, o alarme volta. É *acknowledge*, não *dismiss*.
 
 ### A janela de aviso
 
@@ -269,13 +286,17 @@ Userscripts, no iPad) — quem confirma é você.
   rejeita um nome digitado em minúsculas — por isso a regra é a ambiguidade, não
   a forma. **Risco que sobra:** uma linha com um único candidato minúsculo que
   seja um nome e nenhum selo ainda seria lida como cidade. Fechar isso exige uma
-  lista fechada de cidades ou o `tenantId` do payload (que só chega na
-  navegação) — é decisão de produto. A cidade lida vive só em memória
+  lista fechada de cidades ou o `tenantId` (ou `patient.locality`) da
+  resposta da fila, que agora chega a cada 15 s — é decisão de produto. A cidade lida vive só em memória
   (`ultimaOrigem`), nunca em disco, e morre com a aba.
 - Os ids de atendimento vivem em memória e morrem com a aba.
-- Em disco vão só as preferências do médico: intensidade, som, volume e se
-  a janela de aviso está ligada.
-- O script faz uma única consulta de leitura, à fila do médico logado (`/api/doctor/queues/mine`), a cada 15 s. O cabeçalho de acesso é copiado da chamada que a própria tela fez e vive só em memória.
+- Em disco vão só as preferências do médico: intensidade, som, volume, se
+  a janela de aviso está ligada e se o cartão-convite já foi respondido.
+- O script faz uma única consulta de leitura, à fila do médico logado
+  (`/api/doctor/queues/mine`), a cada 15 s. O cabeçalho de acesso é copiado da
+  chamada que a própria tela fez e vive só em memória. A outra requisição é a
+  verificação de versão ao clicar no sino: um GET do cabeçalho `.meta.js` no
+  GitHub, sem cookies e sem dado nenhum do médico ou do paciente.
 - Uma notificação do sistema aparece na tela de bloqueio e no histórico de
   notificações do computador, fora do navegador. É o pior lugar possível para um
   dado de paciente — por isso nenhum vai para lá.
@@ -283,7 +304,7 @@ Userscripts, no iPad) — quem confirma é você.
 ## Desenvolvimento
 
 ```bash
-npm run verificar   # os dois cabeçalhos, dado sensível, e as cinco suítes de teste
+npm run verificar   # os dois cabeçalhos, dado sensível, e as dez suítes de teste
 npm run build       # gera os 4 arquivos em dist/ (Tampermonkey + Safari)
 ```
 
@@ -299,6 +320,7 @@ Estrutura:
 
 ```
 src/atencao.js   por onde avisar (título, favicone, notificação, tela acesa)
+src/atualizacao.js  confere se há versão nova (ao clicar no sino, no máximo a cada 30 min)
 src/visual.js    o visual do painel (cabeçalho branco, sino em SVG), igual ao Assistente Meeds
 src/convite.js   o cartão-convite dos avisos fora da aba e o passo a passo do pop-up
 src/som.js       os sons, sintetizados — sem arquivo externo
@@ -307,10 +329,11 @@ src/som.js       os sons, sintetizados — sem arquivo externo
 src/fila.js      como saber que chegou paciente NESTE site
 src/alarme.js    a lógica e a interface
 scripts/build.js junta tudo num userscript só
-tests/           atencao, fila e som: um módulo cada
-                 alarme.test.js e alarme-sinais.test.js: o alarme INTEIRO,
-                 rodando os quatro fontes de verdade com relógio e tela falsos
-tests/helpers/   ambiente-alarme.js, o "navegador" dessas duas suítes
+tests/           atencao, fila, som, visual, convite e atualizacao: um módulo cada
+                 alarme.test.js, alarme-sinais.test.js, alarme-reengate.test.js e
+                 alarme-consulta.test.js: o alarme INTEIRO, rodando os fontes de
+                 verdade com relógio, tela e rede falsos
+tests/helpers/   ambiente-alarme.js, o "navegador" dessas suítes
 ```
 
 ### Por que existem `alarme.test.js` e `alarme-sinais.test.js`
@@ -330,7 +353,7 @@ correção óbvia e errada (por exemplo, absorver uma leitura "repetida" parece
 resolver a duplicidade e engole o segundo paciente para sempre).
 
 `src/atencao.js` e `src/som.js` vieram do
-[Assistente Meeds](https://github.com/sodelfino/meeds-suite) e são a única coisa
-compartilhada entre os dois projetos. São genéricos de propósito: não sabem o
+[Assistente Meeds](https://github.com/sodelfino/meeds-suite), e `src/visual.js`
+copia o cabeçalho e os ícones de lá; é tudo o que os dois projetos compartilham. São genéricos de propósito: não sabem o
 que é fila nem o que é paciente. Tudo que é específico deste site mora em
 `src/fila.js` — é lá que se mexe quando o Meeds Doctor mudar de layout.
