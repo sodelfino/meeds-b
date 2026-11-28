@@ -36,8 +36,14 @@ Entre em `doctor.calltechsaude.com.br` como sempre. Um botão 🔔 aparece no ca
 inferior direito, com uma ⚙️ pequena ao lado. É só isso — ele já está
 funcionando.
 
+Na primeira vez, um cartão pergunta **"Ser avisado fora do Meeds?"**. Toque em
+**Sim, ativar**: ele abre uma janelinha de teste e pede a permissão de
+notificação. Se o navegador bloquear a janela, o próprio cartão mostra como
+liberar. Mudou de ideia depois? Na ⚙️, use **Configurar avisos fora da aba**.
+
 - **Clique** no 🔔 para trocar a intensidade: 🔔 completo → 🔉 discreto →
-  🔕 silencioso → 🔔 de novo.
+  🔕 silencioso → 🔔 de novo. O mesmo clique confere se há versão nova (no
+  máximo a cada 30 min); se houver, um cartão oferece **Atualizar agora**.
 - **Clique** na ⚙️ ao lado para abrir o painel: intensidade, som, volume e a
   janela de aviso. (Clique com o botão direito ou shift+clique no próprio 🔔
   também abrem o mesmo painel, se preferir.)
@@ -77,9 +83,9 @@ A tela vai encher de código — é isso mesmo, não é erro. Toque no **ícone 
 extensões** na barra de endereço → **Userscripts**, e confirme a instalação
 oferecida.
 
-> **Se a tela só mostrar código, sem oferecer instalação:** baixe o arquivo
-> pelo [release mais recente](https://github.com/sodelfino/meeds-b/releases/latest)
-> e mova para a pasta do Userscripts pelo app Arquivos.
+> **Se a tela só mostrar código, sem oferecer instalação:** com o mesmo endereço
+> aberto, toque em **Compartilhar → Salvar em Arquivos** e mova o arquivo
+> `meeds-b.safari.user.js` para a pasta do Userscripts pelo app Arquivos.
 
 ### 4. Abra o Meeds Doctor
 
@@ -93,8 +99,10 @@ computador, acima. Funciona igual.
 É o que faz o alarme chegar quando você está no Memed ou em outra janela — que é
 quando ele mais importa.
 
-Clique com o botão direito no 🔔 e, se aparecer **"Ativar avisos do sistema"**,
-clique. O navegador pergunta uma vez.
+Normalmente o cartão-convite da primeira vez já resolve isso (ver o passo 3).
+Se você o fechou: clique na ⚙️ ao lado do 🔔 e use **Configurar avisos fora da
+aba** — ou, se aparecer **"Ativar avisos do sistema"**, clique nele. O navegador
+pergunta uma vez.
 
 > **Se nada acontecer ao clicar:** alguns navegadores (o Edge por padrão)
 > silenciam esse pedido e só piscam um **ícone de sino na barra de endereço**.
@@ -112,9 +120,11 @@ notificação do sistema.
 ## Perguntas
 
 **Ele guarda dados dos meus pacientes?**
-Não. Nenhum nome, CPF ou queixa é lido, gravado ou enviado. O aviso fala em
-quantidade — "2 aguardando" — e nada mais. Em disco ficam só as suas
-preferências: intensidade, som, volume e janela de aviso.
+Não. Nenhum nome, CPF ou queixa é gravado, exibido ou enviado. O aviso fala em
+quantidade e tempo — "2 aguardando · o mais antigo há 4 min" — e nada mais. Em
+disco ficam só as suas preferências: intensidade, som, volume, janela de aviso e
+se você já respondeu o convite. A única consulta que o alarme faz é ler a sua
+própria fila, a cada 15 s, com o acesso que a tela do Meeds já usa.
 
 **Ele funciona no iPad e no iPhone?**
 Sim, pela versão do Safari (ver "No iPad, no iPhone ou no Mac com Safari",
@@ -127,7 +137,8 @@ não oferece essas duas opções quando detecta o iPad, em vez de mostrar algo
 que não vai funcionar.
 
 **Preciso reinstalar quando sair versão nova?**
-Não. Tampermonkey e Userscripts verificam sozinhos e atualizam.
+Não. Tampermonkey e Userscripts verificam sozinhos e atualizam. E ao clicar no
+🔔 o próprio alarme confere: se houver versão nova, aparece **Atualizar agora**.
 
 **Como desinstalo?**
 No painel do Tampermonkey (ou, no Userscripts, na lista de scripts do app),
